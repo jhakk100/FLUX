@@ -1,7 +1,8 @@
 import fs from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { execFile } from "node:child_process";
+import { getAsset, isSea } from "node:sea";
 import { loadConfig } from "./config.mjs";
 import { openStore } from "./db.mjs";
 import { classifyAction, redactSecret, requiresApproval, resolveInsideWorkspace } from "./security.mjs";
@@ -9,8 +10,19 @@ import { providerStatus, streamCompletion } from "./providers.mjs";
 
 const config = loadConfig();
 const store = openStore(config.dataDirectory);
-const here = path.dirname(fileURLToPath(import.meta.url));
-const dashboardPath = path.resolve(here, "../../dashboard/index.html");
+const dashboardPath = path.resolve(process.cwd(), "apps/dashboard/index.html");
+
+async function loadDashboard() {
+  if (isSea()) return getAsset("dashboard.html", "utf8");
+  return fs.readFile(dashboardPath, "utf8");
+}
+
+function openDashboard(url) {
+  if (process.env.HARU_OPEN_BROWSER === "false") return;
+  const command = process.platform === "win32" ? "cmd.exe" : process.platform === "darwin" ? "open" : "xdg-open";
+  const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
+  execFile(command, args, { windowsHide: true }, () => {});
+}
 
 function json(response, status, body) {
   response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
@@ -79,7 +91,7 @@ async function handle(request, response) {
     return json(response, 200, { ok: true, provider: providerStatus(config), host: config.host, port: config.port });
   }
   if (url.pathname === "/" && request.method === "GET") {
-    const dashboard = await fs.readFile(dashboardPath, "utf8");
+    const dashboard = await loadDashboard();
     response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
     return response.end(dashboard);
   }
@@ -160,6 +172,8 @@ const server = http.createServer((request, response) => {
 });
 
 server.listen(config.port, config.host, () => {
-  console.log(`Haru Gateway is running at http://${config.host}:${config.port}`);
+  const gatewayUrl = `http://${config.host}:${config.port}`;
+  console.log(`Haru Gateway is running at ${gatewayUrl}`);
   console.log(`Provider: ${providerStatus(config).provider}`);
+  openDashboard(gatewayUrl);
 });
