@@ -1,0 +1,16 @@
+{
+  "name": "haru",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local-first personal AI orchestrator",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "start": "node apps/gateway/src/index.mjs",
+    "dev": "node --watch apps/gateway/src/index.mjs",
+    "check": "node --check apps/gateway/src/index.mjs && node --check apps/gateway/src/db.mjs && node --check apps/gateway/src/providers.mjs && node --check apps/gateway/src/security.mjs",
+    "test": "node --test apps/gateway/test/*.test.mjs"
+  }
+}
