@@ -1,0 +1,31 @@
+# Dependencies and builds
+node_modules/
+dist/
+build/
+.next/
+coverage/
+
+# Local runtime state, databases, logs, and uploads
+.data/
+data/
+runtime/
+uploads/
+logs/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+
+# Secrets and machine-specific configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# Editor and operating-system files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
