@@ -316,6 +316,74 @@ export async function testProviderConnection(config) {
   return { ok: true, message: "API 서버 인증에 성공했습니다. 이제 대화에서 응답을 시험할 수 있습니다." };
 }
 
+function modelRecord(model, fallbackId) {
+  const id = model.id ?? model.name ?? fallbackId;
+  const inputTokenLimit = model.inputTokenLimit ?? model.input_token_limit ?? model.context_length ?? model.max_context_length ?? null;
+  const outputTokenLimit = model.outputTokenLimit ?? model.output_token_limit ?? model.max_output_tokens ?? null;
+  const capabilities = model.supportedGenerationMethods ?? model.supported_actions ?? model.capabilities ?? null;
+  return {
+    id: String(id).replace(/^models\//, ""),
+    name: model.displayName ?? model.display_name ?? String(id).replace(/^models\//, ""),
+    owner: model.owned_by ?? model.ownedBy ?? model.provider ?? null,
+    inputTokenLimit: Number.isFinite(inputTokenLimit) ? inputTokenLimit : null,
+    outputTokenLimit: Number.isFinite(outputTokenLimit) ? outputTokenLimit : null,
+    capabilities: Array.isArray(capabilities) ? capabilities.filter((item) => typeof item === "string") : [],
+  };
+}
+
+function requireConfigured(config, connection, name) {
+  if (!connection.apiKey && name !== "Ollama") throw new Error(`${name} API 키를 먼저 저장하세요.`);
+  if (!connection.baseUrl) throw new Error(`${name} 서버 주소가 비어 있습니다.`);
+}
+
+async function fetchModelList(url, headers, signal) {
+  const response = await fetch(url, { headers, signal: signal ?? AbortSignal.timeout(10_000) });
+  if (!response.ok) throw new Error(`모델 목록 조회가 ${response.status} 응답을 반환했습니다: ${await response.text()}`);
+  return response.json();
+}
+
+export async function listAvailableModels(config) {
+  if (config.provider === "demo") return { models: [], message: "Demo 모드에는 외부 모델 목록이 없습니다." };
+  if (config.provider === "ollama") {
+    const payload = await fetchModelList(`${config.ollama.baseUrl}/api/tags`, {});
+    return { models: (payload.models ?? []).map((model) => modelRecord({ id: model.name, displayName: model.name, provider: model.details?.family, capabilities: model.details?.families })).filter((model) => model.id) };
+  }
+  if (config.provider === "lm-studio") {
+    const headers = config.lmstudio.apiKey ? { authorization: `Bearer ${config.lmstudio.apiKey}` } : {};
+    let payload;
+    try {
+      const nativeUrl = new URL(config.lmstudio.baseUrl);
+      nativeUrl.pathname = "/api/v1/models";
+      payload = await fetchModelList(nativeUrl.toString(), headers);
+    } catch {
+      payload = await fetchModelList(`${config.lmstudio.baseUrl}/models`, headers);
+    }
+    return { models: (payload.data ?? payload.models ?? []).map((model) => modelRecord(model)).filter((model) => model.id) };
+  }
+  if (config.provider === "google-ai") {
+    requireConfigured(config, config.googleAi, "Google AI");
+    const payload = await fetchModelList(`${config.googleAi.baseUrl}/models`, { "x-goog-api-key": config.googleAi.apiKey });
+    return { models: (payload.models ?? []).map((model) => modelRecord(model)).filter((model) => model.id) };
+  }
+  if (["factchat", "factchat-responses"].includes(config.provider)) {
+    requireConfigured(config, config.factchat, "FactChat");
+    const headers = { authorization: `Bearer ${config.factchat.apiKey}` };
+    const [modelsResult, creditsResult] = await Promise.allSettled([
+      fetchModelList(`${config.factchat.baseUrl}/models/`, headers),
+      fetchModelList(`${config.factchat.baseUrl}/credits/`, headers),
+    ]);
+    if (modelsResult.status === "rejected") throw modelsResult.reason;
+    const credits = creditsResult.status === "fulfilled" ? creditsResult.value : null;
+    const usage = credits && Object.values(credits).some((value) => value !== null && value !== undefined)
+      ? { monthlyAllocated: credits.monthly_allocated ?? null, purchased: credits.purchased ?? null, total: credits.total ?? null }
+      : null;
+    return { models: (modelsResult.value.data ?? modelsResult.value.models ?? []).map((model) => modelRecord(model)).filter((model) => model.id), usage };
+  }
+  requireConfigured(config, config.openai, "API");
+  const payload = await fetchModelList(`${config.openai.baseUrl}/models`, { authorization: `Bearer ${config.openai.apiKey}` });
+  return { models: (payload.data ?? payload.models ?? []).map((model) => modelRecord(model)).filter((model) => model.id) };
+}
+
 export async function getFactchatAccount(config) {
   if (config.provider !== "factchat") {
     const error = new Error("FactChat account details are available only when the university private API provider is selected.");

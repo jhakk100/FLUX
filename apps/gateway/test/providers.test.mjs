@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createProviderRuntime, providerStatus, publicProviderSettings, streamCompletion } from "../src/providers.mjs";
+import { createProviderRuntime, listAvailableModels, providerStatus, publicProviderSettings, streamCompletion } from "../src/providers.mjs";
 
 const baseConfig = {
   provider: "demo",
@@ -57,6 +57,19 @@ test("Google AI settings keep the Gemini key local and expose only its presence"
   assert.equal(config.googleAi.apiKey, "gemini-secret");
   assert.equal(publicProviderSettings(config).googleAiApiKeyConfigured, true);
   assert.equal(JSON.stringify(publicProviderSettings(config)).includes("gemini-secret"), false);
+});
+
+test("Google AI model lookup returns supported token limits without exposing the API key", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => ({ ok: true, json: async () => ({ models: [{ name: "models/gemini-test", displayName: "Gemini Test", inputTokenLimit: 100000, outputTokenLimit: 8192, supportedGenerationMethods: ["generateContent"] }] }) });
+  try {
+    const runtime = createProviderRuntime(baseConfig);
+    runtime.configure({ provider: "google-ai", googleAiModel: "gemini-test", googleAiApiKey: "secret" });
+    const result = await listAvailableModels(runtime.get());
+    assert.deepEqual(result.models[0], { id: "gemini-test", name: "Gemini Test", owner: null, inputTokenLimit: 100000, outputTokenLimit: 8192, capabilities: ["generateContent"] });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("a provider stream accepts a cancellation signal", async () => {

@@ -9,7 +9,7 @@ import { openStore } from "./db.mjs";
 import { classifyAction, redactSecret, requiresApproval, resolveInsideWorkspace } from "./security.mjs";
 import { projectInstructionMessage } from "./project-instructions.mjs";
 import { buildModelContext } from "./context.mjs";
-import { createProviderRuntime, getFactchatAccount, providerStatus, publicProviderSettings, streamCompletion, testProviderConnection } from "./providers.mjs";
+import { createProviderRuntime, getFactchatAccount, listAvailableModels, providerStatus, publicProviderSettings, streamCompletion, testProviderConnection } from "./providers.mjs";
 import { discordStatus, startDiscordBot } from "./discord.mjs";
 import { notionBlocksToText, notionStatus, queryNotionDataSource, readNotionPage, searchNotion, testNotionConnection } from "./notion.mjs";
 import { APP_VERSION, RELEASE_CHANNEL } from "./app-info.mjs";
@@ -333,6 +333,9 @@ async function handle(request, response) {
   if (url.pathname === "/api/provider-settings/test" && request.method === "POST") {
     const result = await testProviderConnection(providerRuntime.get());
     return json(response, 200, result);
+  }
+  if (url.pathname === "/api/provider-models" && request.method === "GET") {
+    return json(response, 200, await listAvailableModels(providerRuntime.get()));
   }
   if (url.pathname === "/api/provider-account" && request.method === "GET") {
     return json(response, 200, await getFactchatAccount(providerRuntime.get()));
