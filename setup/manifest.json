@@ -1,0 +1,15 @@
+{
+  "node": {
+    "version": "24.19.0",
+    "minimumVersion": "24.0.0",
+    "source": "https://nodejs.org/dist/v24.19.0/",
+    "files": [
+      "node-v24.19.0-x64.msi",
+      "node-v24.19.0-linux-x64.tar.xz"
+    ]
+  },
+  "pnpm": {
+    "version": "11.19.0",
+    "installation": "Node.js 24 includes Corepack; Corepack retrieves this pinned pnpm version."
+  }
+}

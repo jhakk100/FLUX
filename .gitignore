@@ -2,6 +2,9 @@
 node_modules/
 .pnpm-store/
 dist/
+setup/installers/*.msi
+setup/installers/*.tar.xz
+setup/installers/SHASUMS256.txt
 build/
 .next/
 coverage/

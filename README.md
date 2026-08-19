@@ -4,6 +4,8 @@
 
 Windows와 Linux에서 실행되는 로컬 우선 개인 AI 오케스트레이터의 P0 프로토타입입니다.
 
+개발용 Node.js·pnpm 설치와 설치 파일 보관 절차는 [개발 환경 설치 안내](./setup/README.md)에 있습니다.
+
 ## 실행
 
 Node.js 24 이상이 필요합니다.
