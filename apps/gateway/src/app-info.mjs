@@ -1,3 +1,3 @@
 // Kept in sync with package.json. The build bundles this file into Flux.exe.
-export const APP_VERSION = "0.1.31";
+export const APP_VERSION = "0.1.32";
 export const RELEASE_CHANNEL = "beta";
