@@ -12,10 +12,10 @@ const require = createRequire(import.meta.url);
 const dist = path.join(root, "dist");
 const entry = path.join(root, "apps", "gateway", "src", "index.mjs");
 const dashboard = path.join(root, "apps", "dashboard", "index.html");
-const bundle = path.join(dist, "haru.cjs");
-const blob = path.join(dist, "haru-prep.blob");
+const bundle = path.join(dist, "flux.cjs");
+const blob = path.join(dist, "flux-prep.blob");
 const seaConfig = path.join(dist, "sea-config.json");
-const executable = path.join(dist, "Haru.exe");
+const executable = path.join(dist, "Flux.exe");
 const esbuildCli = require.resolve("esbuild/bin/esbuild");
 const postjectCli = require.resolve("postject/dist/cli.js");
 const fuse = "NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2";
@@ -43,9 +43,9 @@ copyFileSync(process.execPath, executable);
 run(process.execPath, [postjectCli, executable, "NODE_SEA_BLOB", blob, "--sentinel-fuse", fuse]);
 copyFileSync(path.join(root, ".env.example"), path.join(dist, ".env.example"));
 writeFileSync(path.join(dist, "README.txt"), [
-  "Haru 실행 파일",
+  "FLUX 실행 파일",
   "",
-  "1. Haru.exe를 더블클릭합니다.",
+  "1. Flux.exe를 더블클릭합니다.",
   "2. 브라우저가 자동으로 열리지 않으면 http://127.0.0.1:4317 을 엽니다.",
   "3. Ollama 또는 OpenAI 호환 API를 사용하려면 .env.example을 .env로 복사한 뒤 값을 설정합니다.",
   "",

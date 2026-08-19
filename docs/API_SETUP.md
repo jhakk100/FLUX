@@ -1,11 +1,11 @@
-# Haru API 연결 안내
+# FLUX API 연결 안내
 
-Haru에서는 **대시보드의 `AI API 설정` 버튼**으로 연결하는 방법을 권장합니다. 공급자, 서버 주소, 모델 이름, API 키를 입력하고 `저장` → `연결 시험` 순서로 진행하면 됩니다.
+FLUX에서는 **대시보드의 `AI API 설정` 버튼**으로 연결하는 방법을 권장합니다. 공급자, 서버 주소, 모델 이름, API 키를 입력하고 `저장` → `연결 시험` 순서로 진행하면 됩니다.
 
 ## API 키 보관 방식
 
 - API 키는 대시보드에서 다시 표시하지 않습니다.
-- 대시보드에서 저장한 값은 현재 PC의 `data/haru.sqlite`에만 저장됩니다. `data/`와 `.env`는 Git 추적에서 제외됩니다.
+- 대시보드에서 저장한 값은 현재 PC의 `data/flux.sqlite`에만 저장됩니다. `data/`와 `.env`는 Git 추적에서 제외됩니다.
 - 현재 P0은 OS 키체인 암호화를 아직 구현하지 않았습니다. 여러 사람이 쓰는 PC에서는 `.env`와 `data/` 폴더의 파일 접근 권한을 제한하세요.
 - 대시보드 저장값이 있으면 환경 변수나 `.env` 파일보다 우선합니다. 키를 완전히 지우려면 설정 화면에서 **저장된 API 키를 지우기**를 선택합니다.
 
@@ -19,7 +19,7 @@ Haru에서는 **대시보드의 `AI API 설정` 버튼**으로 연결하는 방�
 | 모델 예시 | `gpt-5.6-terra` |
 | API 키 | OpenAI Platform에서 만든 API 키 |
 
-Haru는 이 방식에서 `POST /v1/responses`와 스트리밍 응답을 사용합니다. OpenAI는 멀티턴·도구 사용 워크플로에 Responses API 사용을 안내합니다. [공식 모델 가이드](https://developers.openai.com/api/docs/guides/latest-model)
+FLUX는 이 방식에서 `POST /v1/responses`와 스트리밍 응답을 사용합니다. OpenAI는 멀티턴·도구 사용 워크플로에 Responses API 사용을 안내합니다. [공식 모델 가이드](https://developers.openai.com/api/docs/guides/latest-model)
 
 ChatGPT/Codex 구독 로그인과 API 사용량은 별개일 수 있으므로, 이 앱에는 Platform API 키를 입력하는 방식으로 시작합니다. 키는 절대 대화 메시지나 Git 커밋에 넣지 마세요.
 
@@ -39,7 +39,7 @@ ChatGPT/Codex 구독 로그인과 API 사용량은 별개일 수 있으므로, �
 
 제공처의 문서에서 다음 중 어느 경로를 지원하는지 먼저 확인하세요.
 
-| 지원 경로 | Haru에서 고를 공급자 |
+| 지원 경로 | FLUX에서 고를 공급자 |
 | --- | --- |
 | `POST /v1/responses` | OpenAI 호환 Responses API |
 | `POST /v1/chat/completions` | OpenAI 호환 Chat Completions API |
@@ -53,7 +53,7 @@ ChatGPT/Codex 구독 로그인과 API 사용량은 별개일 수 있으므로, �
 ```powershell
 Copy-Item .env.example .env
 notepad .env
-.\dist\Haru.exe
+.\dist\Flux.exe
 ```
 
-설정이 바뀌면 Haru를 완전히 종료한 뒤 다시 시작하세요. `.env` 파일과 `data/` 폴더는 절대 공개 저장소에 올리지 마세요.
+설정이 바뀌면 FLUX를 완전히 종료한 뒤 다시 시작하세요. `.env` 파일과 `data/` 폴더는 절대 공개 저장소에 올리지 마세요.

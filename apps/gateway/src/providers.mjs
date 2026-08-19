@@ -47,7 +47,7 @@ export function createProviderRuntime(environmentConfig, persistedConfig) {
 async function* demoStream(messages) {
   const lastUserMessage = [...messages].reverse().find((message) => message.role === "user")?.content ?? "";
   const response = [
-    "현재 Haru는 demo 모드로 실행 중입니다. ",
+    "현재 FLUX는 demo 모드로 실행 중입니다. ",
     "`.env`에서 Ollama 또는 OpenAI 호환 Responses API를 설정하면 실제 모델 응답으로 바뀝니다.\n\n",
     `받은 요청: ${lastUserMessage}`,
   ].join("");
@@ -58,7 +58,7 @@ async function* demoStream(messages) {
 }
 
 async function* ollamaStream(config, messages) {
-  if (!config.ollama.model) throw new Error("HARU_OLLAMA_MODEL is required for the Ollama provider.");
+  if (!config.ollama.model) throw new Error("FLUX_OLLAMA_MODEL is required for the Ollama provider.");
   const response = await fetch(`${config.ollama.baseUrl}/api/chat`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -86,8 +86,8 @@ async function* ollamaStream(config, messages) {
 }
 
 async function* openAiCompatibleStream(config, messages) {
-  if (!config.openai.apiKey) throw new Error("HARU_OPENAI_API_KEY is required for the OpenAI-compatible provider.");
-  if (!config.openai.model) throw new Error("HARU_OPENAI_MODEL is required for the OpenAI-compatible provider.");
+  if (!config.openai.apiKey) throw new Error("FLUX_OPENAI_API_KEY is required for the OpenAI-compatible provider.");
+  if (!config.openai.model) throw new Error("FLUX_OPENAI_MODEL is required for the OpenAI-compatible provider.");
   const response = await fetch(`${config.openai.baseUrl}/responses`, {
     method: "POST",
     headers: {

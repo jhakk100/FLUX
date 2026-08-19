@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 
 export function openStore(dataDirectory) {
   fs.mkdirSync(dataDirectory, { recursive: true });
-  const database = new DatabaseSync(path.join(dataDirectory, "haru.sqlite"));
+  const database = new DatabaseSync(path.join(dataDirectory, "flux.sqlite"));
   database.exec("PRAGMA journal_mode = WAL;");
   database.exec("PRAGMA foreign_keys = ON;");
   database.exec(`
@@ -120,6 +120,11 @@ export function openStore(dataDirectory) {
     return database.prepare("SELECT id, action, risk, target, preview, status, created_at AS createdAt, decided_at AS decidedAt FROM approvals ORDER BY created_at DESC").all();
   }
 
+  function getApproval(approvalId) {
+    const approval = database.prepare("SELECT * FROM approvals WHERE id = ?").get(approvalId);
+    return approval ? { ...approval, payload: JSON.parse(approval.payload) } : null;
+  }
+
   function decideApproval(approvalId, status) {
     const approval = database.prepare("SELECT * FROM approvals WHERE id = ?").get(approvalId);
     if (!approval) return null;
@@ -147,5 +152,5 @@ export function openStore(dataDirectory) {
     audit("setting.updated", "setting", key, { key });
   }
 
-  return { createProject, listProjects, getProject, createSession, listSessions, getSession, addMessage, listMessages, createApproval, listApprovals, decideApproval, listAuditEvents, getSetting, setSetting };
+  return { createProject, listProjects, getProject, createSession, listSessions, getSession, addMessage, listMessages, createApproval, listApprovals, getApproval, decideApproval, listAuditEvents, getSetting, setSetting };
 }

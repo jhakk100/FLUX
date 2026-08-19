@@ -1,4 +1,6 @@
-# Haru
+# FLUX
+
+> Fixing Lousy User eXperience
 
 Windows와 Linux에서 실행되는 로컬 우선 개인 AI 오케스트레이터의 P0 프로토타입입니다.
 
@@ -15,7 +17,7 @@ node --env-file=.env apps/gateway/src/index.mjs
 
 ## Windows 실행 파일
 
-Windows에서는 [dist/Haru.exe](./dist/Haru.exe)를 더블클릭해 실행할 수 있습니다. 실행 파일은 Node.js를 따로 설치하지 않아도 되며, 로컬 Gateway를 시작한 뒤 브라우저를 엽니다. 같은 폴더의 `.env.example`을 `.env`로 복사하면 Ollama 또는 OpenAI 호환 API 설정을 추가할 수 있습니다.
+Windows에서는 [dist/Flux.exe](./dist/Flux.exe)를 더블클릭해 실행할 수 있습니다. 실행 파일은 Node.js를 따로 설치하지 않아도 되며, 로컬 Gateway를 시작한 뒤 브라우저를 엽니다. 같은 폴더의 `.env.example`을 `.env`로 복사하면 Ollama 또는 OpenAI 호환 API 설정을 추가할 수 있습니다.
 
 개발자가 실행 파일을 다시 만들려면 의존성을 설치한 뒤 아래 명령을 실행합니다.
 
@@ -27,7 +29,7 @@ pnpm run build:win
 
 Node의 단일 실행 파일 기능은 아직 활성 개발 단계라 첫 실행 시 실험적 기능 경고가 표시될 수 있습니다. 이 실행 파일은 Windows 전용이며, Linux 배포본은 해당 OS에서 별도로 빌드해야 합니다.
 
-Ollama를 쓰려면 `.env`에서 `HARU_PROVIDER=ollama`와 모델 이름을 설정합니다. OpenAI 호환 Responses API를 쓰려면 `HARU_PROVIDER=openai-compatible`, API 키, 모델을 설정합니다. API 키는 브라우저나 Git에 저장하지 않습니다.
+Ollama를 쓰려면 `.env`에서 `FLUX_PROVIDER=ollama`와 모델 이름을 설정합니다. OpenAI 호환 Responses API를 쓰려면 `FLUX_PROVIDER=openai-compatible`, API 키, 모델을 설정합니다. API 키는 Git에 저장하지 않으며, 대시보드로 저장한 키의 현재 로컬 보관 방식은 [API 연결 안내](./docs/API_SETUP.md)에 명시합니다.
 
 API 설정 화면과 공급자별 복붙 예시는 [API 연결 안내](./docs/API_SETUP.md)에 있습니다.
 
@@ -36,7 +38,7 @@ API 설정 화면과 공급자별 복붙 예시는 [API 연결 안내](./docs/AP
 - SQLite 기반 세션/메시지/승인/감사 기록
 - 로컬 웹 대시보드, 세션 생성·전환, 스트리밍 채팅
 - demo / Ollama / OpenAI 호환 Responses API 어댑터
-- 프로젝트 경로 경계와 파일 변경 승인 요청 API
+- 프로젝트 폴더 탐색·텍스트 파일 읽기와 변경 전후 diff 승인 요청
 - 삭제·덮어쓰기·외부 효과를 자동 실행하지 않는 승인 정책
 
 자세한 방향은 [설계 문서](./02-product-and-architecture.md)를 참고하세요.
