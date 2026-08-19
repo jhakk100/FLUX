@@ -1,12 +1,23 @@
 import process from "node:process";
 import os from "node:os";
 import path from "node:path";
+import { isSea } from "node:sea";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
-function defaultDataDirectory(env) {
+function previousPlatformDataDirectory(env) {
   if (process.platform === "win32") return path.join(env.LOCALAPPDATA || path.join(env.USERPROFILE || os.homedir(), "AppData", "Local"), "FLUX", "data");
   return path.join(env.XDG_STATE_HOME || path.join(env.HOME || os.homedir(), ".local", "state"), "flux", "data");
+}
+
+function portableRootDirectory() {
+  if (!isSea()) return process.cwd();
+  const executableDirectory = path.dirname(process.execPath);
+  return path.basename(executableDirectory).toLowerCase() === "dist" ? path.dirname(executableDirectory) : executableDirectory;
+}
+
+function defaultDataDirectory() {
+  return path.join(portableRootDirectory(), "user-data");
 }
 
 export function loadConfig(env = process.env) {
@@ -34,9 +45,13 @@ export function loadConfig(env = process.env) {
     host,
     port,
     gatewayToken,
-    // Runtime state must survive replacing or rebuilding the executable.
-    dataDirectory: setting("DATA_DIR", defaultDataDirectory(env)),
-    legacyDataDirectory: path.resolve(process.cwd(), "data"),
+    // Keep all user-owned state beside FLUX so copying the folder keeps its history.
+    dataDirectory: setting("DATA_DIR", defaultDataDirectory()),
+    legacyDataDirectories: [
+      path.resolve(process.cwd(), "data"),
+      path.join(path.dirname(process.execPath), "data"),
+      previousPlatformDataDirectory(env),
+    ],
     contextTokenBudget,
     contextCompactThreshold,
     provider: setting("PROVIDER", "demo"),

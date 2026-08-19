@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Risk, assertSafeWorkspacePath, classifyAction, isProtectedSystemPath, requiresApproval, resolveInsideWorkspace } from "../src/security.mjs";
+import { FileApprovalMode, Risk, assertSafeWorkspacePath, classifyAction, isProtectedSystemPath, requiresApproval, requiresInteractiveFileApproval, resolveInsideWorkspace } from "../src/security.mjs";
 
 test("destructive actions are never automatic", () => {
   assert.equal(classifyAction("delete-file"), Risk.DESTRUCTIVE);
@@ -10,6 +10,16 @@ test("destructive actions are never automatic", () => {
 test("workspace resolver rejects path traversal", () => {
   assert.throws(() => resolveInsideWorkspace("C:/work/project", "../secrets.txt"));
   assert.equal(resolveInsideWorkspace("C:/work/project", "notes/today.md"), "C:\\work\\project\\notes\\today.md");
+});
+
+test("file approval modes never silently delete files", () => {
+  assert.equal(requiresInteractiveFileApproval("create-file", FileApprovalMode.GLOBAL), false);
+  assert.equal(requiresInteractiveFileApproval("modify-file", FileApprovalMode.GLOBAL), false);
+  assert.equal(requiresInteractiveFileApproval("create-file", FileApprovalMode.AGENT), false);
+  assert.equal(requiresInteractiveFileApproval("modify-file", FileApprovalMode.AGENT), true);
+  assert.equal(requiresInteractiveFileApproval("create-file", FileApprovalMode.ASK), true);
+  assert.equal(requiresInteractiveFileApproval("delete-file", FileApprovalMode.GLOBAL), true);
+  assert.equal(requiresInteractiveFileApproval("delete-file", FileApprovalMode.AGENT), true);
 });
 
 test("protected Windows and Linux operating-system paths cannot become projects or change targets", () => {

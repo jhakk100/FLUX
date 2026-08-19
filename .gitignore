@@ -12,6 +12,7 @@ coverage/
 # Local runtime state, databases, logs, and uploads
 .data/
 data/
+user-data/
 runtime/
 uploads/
 logs/

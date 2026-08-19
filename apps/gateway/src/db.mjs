@@ -3,11 +3,12 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 
-function migrateLegacyStore(dataDirectory, legacyDataDirectory) {
-  if (!legacyDataDirectory || path.resolve(dataDirectory) === path.resolve(legacyDataDirectory)) return;
+function migrateLegacyStore(dataDirectory, legacyDataDirectories) {
   const destination = path.join(dataDirectory, "flux.sqlite");
-  const source = path.join(legacyDataDirectory, "flux.sqlite");
-  if (fs.existsSync(destination) || !fs.existsSync(source)) return;
+  if (fs.existsSync(destination)) return;
+  const sourceDirectory = legacyDataDirectories.find((directory) => directory && path.resolve(dataDirectory) !== path.resolve(directory) && fs.existsSync(path.join(directory, "flux.sqlite")));
+  if (!sourceDirectory) return;
+  const source = path.join(sourceDirectory, "flux.sqlite");
   fs.mkdirSync(dataDirectory, { recursive: true });
   for (const suffix of ["", "-wal", "-shm"]) {
     const legacyFile = `${source}${suffix}`;
@@ -15,8 +16,8 @@ function migrateLegacyStore(dataDirectory, legacyDataDirectory) {
   }
 }
 
-export function openStore(dataDirectory, { legacyDataDirectory } = {}) {
-  migrateLegacyStore(dataDirectory, legacyDataDirectory);
+export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirectories = [] } = {}) {
+  migrateLegacyStore(dataDirectory, [...legacyDataDirectories, legacyDataDirectory]);
   fs.mkdirSync(dataDirectory, { recursive: true });
   const database = new DatabaseSync(path.join(dataDirectory, "flux.sqlite"));
   database.exec("PRAGMA journal_mode = WAL;");

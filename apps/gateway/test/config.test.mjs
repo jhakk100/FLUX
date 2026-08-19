@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import test from "node:test";
 import { loadConfig } from "../src/config.mjs";
 
@@ -35,4 +36,8 @@ test("LM Studio has a local OpenAI-compatible default address", () => {
 
 test("a user-selected data directory overrides the persistent platform default", () => {
   assert.equal(loadConfig({ FLUX_DATA_DIR: "D:/flux-data" }).dataDirectory, "D:/flux-data");
+});
+
+test("the default data directory travels with the FLUX folder", () => {
+  assert.equal(loadConfig({}).dataDirectory, path.join(process.cwd(), "user-data"));
 });

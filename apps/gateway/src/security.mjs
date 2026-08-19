@@ -7,6 +7,12 @@ export const Risk = Object.freeze({
   DESTRUCTIVE: "R3",
 });
 
+export const FileApprovalMode = Object.freeze({
+  GLOBAL: "global",
+  AGENT: "agent",
+  ASK: "ask",
+});
+
 const RISK_BY_ACTION = Object.freeze({
   "read-file": Risk.READ,
   "list-files": Risk.READ,
@@ -26,6 +32,19 @@ export function classifyAction(action) {
 
 export function requiresApproval(action) {
   return classifyAction(action) !== Risk.READ;
+}
+
+export function isFileApprovalMode(value) {
+  return Object.values(FileApprovalMode).includes(value);
+}
+
+export function requiresInteractiveFileApproval(action, mode = FileApprovalMode.ASK) {
+  const risk = classifyAction(action);
+  // No policy can silently delete a file. The operating-system path guard applies before this point.
+  if (risk === Risk.DESTRUCTIVE) return true;
+  if (mode === FileApprovalMode.GLOBAL) return false;
+  if (mode === FileApprovalMode.AGENT) return risk !== Risk.REVERSIBLE;
+  return requiresApproval(action);
 }
 
 export function resolveInsideWorkspace(workspacePath, requestedPath = ".") {

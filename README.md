@@ -6,7 +6,7 @@ Windows와 Linux에서 실행되는 로컬 우선 개인 AI 오케스트레이�
 
 ## 버전
 
-베타 기간에는 Semantic Versioning의 `0.1.x`를 사용합니다. 현재 버전은 `0.1.37`이며, `x`는 Git 커밋 순번입니다. 큰 기능 묶음이 안정화되면 `0.2.0`처럼 올립니다. 실행 중인 앱의 버전·연결 상태는 대시보드의 **설정**에서 확인할 수 있습니다.
+베타 기간에는 Semantic Versioning의 `0.1.x`를 사용합니다. 현재 버전은 `0.1.38`이며, `x`는 Git 커밋 순번입니다. 큰 기능 묶음이 안정화되면 `0.2.0`처럼 올립니다. 실행 중인 앱의 버전·연결 상태는 대시보드의 **설정**에서 확인할 수 있습니다.
 
 개발용 Node.js·pnpm 설치와 설치 파일 보관 절차는 [개발 환경 설치 안내](./setup/README.md)에 있습니다.
 
@@ -23,7 +23,7 @@ node --env-file=.env apps/gateway/src/index.mjs
 
 ## Windows 실행 파일
 
-Windows에서는 [dist/Flux.exe](./dist/Flux.exe)를 더블클릭해 실행할 수 있습니다. 실행 파일은 Node.js를 따로 설치하지 않아도 되며, 로컬 Gateway를 시작한 뒤 브라우저를 엽니다. 같은 폴더의 `.env.example`을 `.env`로 복사하면 Ollama 또는 OpenAI 호환 API 설정을 추가할 수 있습니다. 대화·설정 데이터는 Windows의 `%LOCALAPPDATA%\\FLUX\\data`, Linux의 `~/.local/state/flux/data`에 저장되어 실행 파일 재빌드와 분리됩니다.
+Windows에서는 [dist/Flux.exe](./dist/Flux.exe)를 더블클릭해 실행할 수 있습니다. 실행 파일은 Node.js를 따로 설치하지 않아도 되며, 로컬 Gateway를 시작한 뒤 브라우저를 엽니다. 같은 폴더의 `.env.example`을 `.env`로 복사하면 Ollama 또는 OpenAI 호환 API 설정을 추가할 수 있습니다. 대화·설정 데이터는 FLUX 폴더 안의 `user-data`에 저장됩니다. FLUX 폴더 전체를 복사하면 이전 대화·프로젝트·API 설정도 함께 이동하며, 처음 실행할 때 기존 `dist/data` 또는 이전 사용자 저장소의 데이터는 자동으로 옮겨옵니다.
 
 이전 실행 파일이 `dist/data`에 저장한 `flux.sqlite`는 새 영구 저장 위치가 비어 있을 때 첫 실행 시 복사합니다. 이후 실행 파일을 다시 빌드해도 새 저장 위치의 데이터는 삭제되지 않습니다.
 
