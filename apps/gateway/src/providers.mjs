@@ -235,3 +235,34 @@ export async function testProviderConnection(config) {
   if (!response.ok) throw new Error(`API 서버가 ${response.status} 응답을 반환했습니다. 주소와 API 키 권한을 확인하세요.`);
   return { ok: true, message: "API 서버 인증에 성공했습니다. 이제 대화에서 응답을 시험할 수 있습니다." };
 }
+
+export async function getFactchatAccount(config) {
+  if (config.provider !== "factchat") {
+    const error = new Error("FactChat account details are available only when the university private API provider is selected.");
+    error.statusCode = 409;
+    throw error;
+  }
+  if (!config.factchat.apiKey) {
+    const error = new Error("FactChat API 키를 입력하세요.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const headers = { authorization: `Bearer ${config.factchat.apiKey}` };
+  const [modelsResponse, creditsResponse] = await Promise.all([
+    fetch(`${config.factchat.baseUrl}/models/`, { headers, signal: AbortSignal.timeout(10_000) }),
+    fetch(`${config.factchat.baseUrl}/credits/`, { headers, signal: AbortSignal.timeout(10_000) }),
+  ]);
+  if (!modelsResponse.ok) throw new Error(`FactChat model list returned ${modelsResponse.status}.`);
+  if (!creditsResponse.ok) throw new Error(`FactChat credits returned ${creditsResponse.status}.`);
+  const modelsPayload = await modelsResponse.json();
+  const credits = await creditsResponse.json();
+  const sourceModels = modelsPayload.data ?? modelsPayload.models ?? [];
+  return {
+    models: sourceModels.map((model) => ({ id: model.id, name: model.name ?? model.id, ownedBy: model.owned_by ?? model.provider ?? null })).filter((model) => model.id),
+    credits: {
+      monthlyAllocated: credits.monthly_allocated ?? null,
+      purchased: credits.purchased ?? null,
+      total: credits.total ?? null,
+    },
+  };
+}

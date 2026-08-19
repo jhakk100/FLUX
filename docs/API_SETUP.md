@@ -35,6 +35,8 @@ ChatGPT/Codex 구독 로그인과 API 사용량은 별개일 수 있으므로, �
 
 FLUX에서 `사설 API (대학교)`의 기준 구현은 이 Gateway입니다. 다른 대학 API도 동일한 Gateway 계약(모델 목록, Bearer 인증, Chat Completions)을 제공할 때만 이 공급자로 연결하세요. 문서 확인 없이 학교별 전용 주소나 요청 형식을 추측해 추가하지 않습니다.
 
+FLUX의 `GET /api/provider-account`는 선택된 학교 API 키로 Gateway의 `/models/`와 `/credits/`를 함께 조회합니다. 결과에는 조직에 허용된 모델 ID와 월별 할당·사용·잔여 크레딧·다음 갱신일이 포함됩니다.
+
 ## 3. Ollama — 로컬 모델
 
 설정 화면에서 **Ollama**를 고릅니다.

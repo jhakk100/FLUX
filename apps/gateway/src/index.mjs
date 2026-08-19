@@ -9,7 +9,7 @@ import { openStore } from "./db.mjs";
 import { classifyAction, redactSecret, requiresApproval, resolveInsideWorkspace } from "./security.mjs";
 import { projectInstructionMessage, readProjectInstructions } from "./project-instructions.mjs";
 import { buildModelContext } from "./context.mjs";
-import { createProviderRuntime, providerStatus, publicProviderSettings, streamCompletion, testProviderConnection } from "./providers.mjs";
+import { createProviderRuntime, getFactchatAccount, providerStatus, publicProviderSettings, streamCompletion, testProviderConnection } from "./providers.mjs";
 
 const config = loadConfig();
 const store = openStore(config.dataDirectory);
@@ -229,6 +229,9 @@ async function handle(request, response) {
   if (url.pathname === "/api/provider-settings/test" && request.method === "POST") {
     const result = await testProviderConnection(providerRuntime.get());
     return json(response, 200, result);
+  }
+  if (url.pathname === "/api/provider-account" && request.method === "GET") {
+    return json(response, 200, await getFactchatAccount(providerRuntime.get()));
   }
   if (url.pathname === "/api/memories" && request.method === "GET") {
     return json(response, 200, store.listMemories(url.searchParams.get("q") ?? ""));
