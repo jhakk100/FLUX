@@ -36,6 +36,11 @@ export function loadConfig(env = process.env) {
       model: setting("OLLAMA_MODEL", ""),
       contextLength: ollamaContextLength,
     },
+    lmstudio: {
+      baseUrl: setting("LMSTUDIO_BASE_URL", "http://127.0.0.1:1234/v1").replace(/\/$/, ""),
+      model: setting("LMSTUDIO_MODEL", ""),
+      apiKey: setting("LMSTUDIO_API_KEY", ""),
+    },
     openai: {
       apiKey: setting("OPENAI_API_KEY", ""),
       baseUrl: setting("OPENAI_BASE_URL", "https://api.openai.com/v1").replace(/\/$/, ""),

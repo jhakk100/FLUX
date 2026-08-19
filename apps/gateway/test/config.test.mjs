@@ -26,3 +26,9 @@ test("Ollama context length is optional and validated", () => {
   assert.equal(loadConfig({}).ollama.contextLength, null);
   assert.throws(() => loadConfig({ FLUX_OLLAMA_CONTEXT_LENGTH: "100" }), /at least 1024/);
 });
+
+test("LM Studio has a local OpenAI-compatible default address", () => {
+  const config = loadConfig({ FLUX_LMSTUDIO_MODEL: "local-model" });
+  assert.equal(config.lmstudio.baseUrl, "http://127.0.0.1:1234/v1");
+  assert.equal(config.lmstudio.model, "local-model");
+});

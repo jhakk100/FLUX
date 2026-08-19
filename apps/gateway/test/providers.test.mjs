@@ -42,6 +42,13 @@ test("Ollama context length is retained separately from FLUX compaction settings
   assert.equal(runtime.get().ollama.contextLength, null);
 });
 
+test("LM Studio can be configured without a local API key", () => {
+  const runtime = createProviderRuntime({ ...baseConfig, lmstudio: { baseUrl: "http://127.0.0.1:1234/v1", model: "", apiKey: "" } });
+  runtime.configure({ provider: "lm-studio", lmStudioModel: "local-model" });
+  assert.equal(providerStatus(runtime.get()).configured, true);
+  assert.equal(publicProviderSettings(runtime.get()).lmStudioApiKeyConfigured, false);
+});
+
 test("a provider stream accepts a cancellation signal", async () => {
   const controller = new AbortController();
   const stream = streamCompletion(baseConfig, [{ role: "user", content: "long response" }], { signal: controller.signal });

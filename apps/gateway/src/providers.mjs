@@ -2,7 +2,7 @@ function asConversation(messages) {
   return messages.map((message) => ({ role: message.role === "assistant" ? "assistant" : message.role === "system" ? "system" : "user", content: message.content }));
 }
 
-const PROVIDERS = new Set(["demo", "ollama", "openai-compatible", "openai-chat-compatible", "factchat", "factchat-responses"]);
+const PROVIDERS = new Set(["demo", "ollama", "lm-studio", "openai-compatible", "openai-chat-compatible", "factchat", "factchat-responses"]);
 
 function normalizeBaseUrl(value) {
   return String(value ?? "").trim().replace(/\/$/, "");
@@ -19,6 +19,7 @@ function cloneConfig(config) {
   return {
     provider: config.provider,
     ollama: { ...config.ollama },
+    lmstudio: { ...config.lmstudio },
     openai: { ...config.openai },
     factchat: { ...config.factchat },
   };
@@ -30,6 +31,7 @@ export function createProviderRuntime(environmentConfig, persistedConfig) {
     current = {
       provider: persistedConfig.provider ?? current.provider,
       ollama: { ...current.ollama, ...persistedConfig.ollama },
+      lmstudio: { ...current.lmstudio, ...persistedConfig.lmstudio },
       openai: { ...current.openai, ...persistedConfig.openai },
       factchat: { ...current.factchat, ...persistedConfig.factchat },
     };
@@ -43,6 +45,8 @@ export function createProviderRuntime(environmentConfig, persistedConfig) {
     next.ollama.baseUrl = normalizeBaseUrl(input.ollamaBaseUrl ?? next.ollama.baseUrl);
     next.ollama.model = String(input.ollamaModel ?? next.ollama.model).trim();
     if (Object.hasOwn(input, "ollamaContextLength")) next.ollama.contextLength = normalizeContextLength(input.ollamaContextLength);
+    next.lmstudio.baseUrl = normalizeBaseUrl(input.lmStudioBaseUrl ?? next.lmstudio.baseUrl);
+    next.lmstudio.model = String(input.lmStudioModel ?? next.lmstudio.model).trim();
     next.openai.baseUrl = normalizeBaseUrl(input.openaiBaseUrl ?? next.openai.baseUrl);
     next.openai.model = String(input.openaiModel ?? next.openai.model).trim();
     next.factchat.baseUrl = normalizeBaseUrl(input.factchatBaseUrl ?? next.factchat.baseUrl);
@@ -51,6 +55,8 @@ export function createProviderRuntime(environmentConfig, persistedConfig) {
     else if (typeof input.apiKey === "string" && input.apiKey.trim()) next.openai.apiKey = input.apiKey.trim();
     if (input.clearFactchatApiKey === true) next.factchat.apiKey = "";
     else if (typeof input.factchatApiKey === "string" && input.factchatApiKey.trim()) next.factchat.apiKey = input.factchatApiKey.trim();
+    if (input.clearLmStudioApiKey === true) next.lmstudio.apiKey = "";
+    else if (typeof input.lmStudioApiKey === "string" && input.lmStudioApiKey.trim()) next.lmstudio.apiKey = input.lmStudioApiKey.trim();
     current = next;
     return cloneConfig(current);
   }
@@ -153,16 +159,16 @@ async function* openAiCompatibleStream(config, messages, signal) {
   }
 }
 
-async function* openAiChatCompatibleStream(config, messages, signal) {
-  if (!config.openai.apiKey) throw new Error("API 키를 입력하세요.");
-  if (!config.openai.model) throw new Error("모델 이름을 입력하세요.");
-  const response = await fetch(`${config.openai.baseUrl}/chat/completions`, {
+async function* chatCompatibleStream(connection, messages, signal, { name, apiKeyRequired }) {
+  if (apiKeyRequired && !connection.apiKey) throw new Error("API 키를 입력하세요.");
+  if (!connection.model) throw new Error("모델 이름을 입력하세요.");
+  const response = await fetch(`${connection.baseUrl}/chat/completions`, {
     method: "POST",
-    headers: { authorization: `Bearer ${config.openai.apiKey}`, "content-type": "application/json" },
-    body: JSON.stringify({ model: config.openai.model, stream: true, messages: asConversation(messages) }),
+    headers: { ...(connection.apiKey ? { authorization: `Bearer ${connection.apiKey}` } : {}), "content-type": "application/json" },
+    body: JSON.stringify({ model: connection.model, stream: true, messages: asConversation(messages) }),
     signal: requestSignal(signal),
   });
-  if (!response.ok || !response.body) throw new Error(`Model provider returned ${response.status}: ${await response.text()}`);
+  if (!response.ok || !response.body) throw new Error(`${name} returned ${response.status}: ${await response.text()}`);
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -183,6 +189,14 @@ async function* openAiChatCompatibleStream(config, messages, signal) {
   }
 }
 
+async function* openAiChatCompatibleStream(config, messages, signal) {
+  yield* chatCompatibleStream(config.openai, messages, signal, { name: "Model provider", apiKeyRequired: true });
+}
+
+async function* lmStudioStream(config, messages, signal) {
+  yield* chatCompatibleStream(config.lmstudio, messages, signal, { name: "LM Studio", apiKeyRequired: false });
+}
+
 async function* factchatStream(config, messages, signal) {
   if (!config.factchat.apiKey || !config.factchat.model) throw new Error("FactChat API 키와 모델 이름을 입력하세요.");
   const response = await fetch(`${config.factchat.baseUrl}/chat/completions/`, { method: "POST", headers: { authorization: `Bearer ${config.factchat.apiKey}`, "content-type": "application/json" }, body: JSON.stringify({ model: config.factchat.model, stream: true, messages: asConversation(messages) }), signal: requestSignal(signal) });
@@ -201,6 +215,7 @@ async function* factchatResponsesStream(config, messages, signal) {
 
 export function streamCompletion(config, messages, { signal } = {}) {
   if (config.provider === "ollama") return ollamaStream(config, messages, signal);
+  if (config.provider === "lm-studio") return lmStudioStream(config, messages, signal);
   if (config.provider === "openai-compatible") return openAiCompatibleStream(config, messages, signal);
   if (config.provider === "openai-chat-compatible") return openAiChatCompatibleStream(config, messages, signal);
   if (config.provider === "factchat") return factchatStream(config, messages, signal);
@@ -210,6 +225,7 @@ export function streamCompletion(config, messages, { signal } = {}) {
 
 export function providerStatus(config) {
   if (config.provider === "ollama") return { provider: "ollama", configured: Boolean(config.ollama.model), model: config.ollama.model || null, baseUrl: config.ollama.baseUrl, contextLength: config.ollama.contextLength ?? null };
+  if (config.provider === "lm-studio") return { provider: "lm-studio", configured: Boolean(config.lmstudio.model), model: config.lmstudio.model || null, baseUrl: config.lmstudio.baseUrl, apiKeyConfigured: Boolean(config.lmstudio.apiKey) };
   if (["openai-compatible", "openai-chat-compatible"].includes(config.provider)) return { provider: config.provider, configured: Boolean(config.openai.apiKey && config.openai.model), model: config.openai.model || null, baseUrl: config.openai.baseUrl, apiKeyConfigured: Boolean(config.openai.apiKey) };
   if (config.provider === "factchat") return { provider: "factchat", configured: Boolean(config.factchat.apiKey && config.factchat.model), model: config.factchat.model || null, baseUrl: config.factchat.baseUrl, apiKeyConfigured: Boolean(config.factchat.apiKey) };
   if (config.provider === "factchat-responses") return { provider: "factchat-responses", configured: Boolean(config.factchat.apiKey && config.factchat.model), model: config.factchat.model || null, baseUrl: config.factchat.baseUrl, apiKeyConfigured: Boolean(config.factchat.apiKey) };
@@ -222,6 +238,9 @@ export function publicProviderSettings(config) {
     ollamaBaseUrl: config.ollama.baseUrl,
     ollamaModel: config.ollama.model,
     ollamaContextLength: config.ollama.contextLength ?? null,
+    lmStudioBaseUrl: config.lmstudio.baseUrl,
+    lmStudioModel: config.lmstudio.model,
+    lmStudioApiKeyConfigured: Boolean(config.lmstudio.apiKey),
     openaiBaseUrl: config.openai.baseUrl,
     openaiModel: config.openai.model,
     apiKeyConfigured: Boolean(config.openai.apiKey),
@@ -239,6 +258,12 @@ export async function testProviderConnection(config) {
     const payload = await response.json();
     const modelFound = config.ollama.model ? payload.models?.some((model) => model.name === config.ollama.model || model.model === config.ollama.model) : true;
     return { ok: true, message: modelFound ? "Ollama 연결과 모델 확인이 완료되었습니다." : "Ollama에는 연결됐지만 지정한 모델을 찾지 못했습니다. 모델 이름을 확인하세요." };
+  }
+  if (config.provider === "lm-studio") {
+    if (!config.lmstudio.model) throw new Error("LM Studio 모델 이름을 입력한 뒤 저장하세요.");
+    const response = await fetch(`${config.lmstudio.baseUrl}/models`, { headers: config.lmstudio.apiKey ? { authorization: `Bearer ${config.lmstudio.apiKey}` } : {}, signal: AbortSignal.timeout(10_000) });
+    if (!response.ok) throw new Error(`LM Studio가 ${response.status} 응답을 반환했습니다. 서버 주소와 모델을 확인하세요.`);
+    return { ok: true, message: "LM Studio 연결과 모델 목록 확인에 성공했습니다." };
   }
   if (["factchat", "factchat-responses"].includes(config.provider)) {
     if (!config.factchat.apiKey || !config.factchat.model) throw new Error("FactChat API 키와 모델 이름을 입력한 뒤 저장하세요.");

@@ -166,6 +166,14 @@ function agentInstructionsMessage(instructions) {
   };
 }
 
+function responseFormatMessage(markdownPreferred) {
+  if (!markdownPreferred) return null;
+  return {
+    role: "system",
+    content: "Prefer well-structured Markdown for answers when it improves readability: concise headings, lists, tables when useful, and fenced code blocks with a language label. Do not force Markdown for a short plain answer, and never put untrusted user content inside a code block merely to change its meaning.",
+  };
+}
+
 async function notionContextMessage() {
   if (!config.notion.contextPageIds.length) return null;
   const pages = await Promise.all(config.notion.contextPageIds.slice(0, 8).map(async (pageId) => {
@@ -199,6 +207,7 @@ async function generateAssistantReply(session, content, { onDelta = () => {}, ap
   const project = session.projectId ? requireProject(session.projectId) : null;
   const instruction = project ? projectInstructionMessage(await readProjectInstructions(project.workspacePath)) : null;
   const agentInstructions = agentInstructionsMessage(store.getSetting("agent-instructions") ?? "");
+  const responseFormat = responseFormatMessage(store.getSetting("markdown-preferred") ?? true);
   const memory = memoryContextMessage(store.listMemories("", 12));
   const goals = goalsContextMessage(store.listGoals());
   const notion = await notionContextMessage();
@@ -206,7 +215,7 @@ async function generateAssistantReply(session, content, { onDelta = () => {}, ap
   const controller = new AbortController();
   activeChatControllers.set(session.id, controller);
   try {
-    for await (const delta of streamCompletion(providerRuntime.get(), [agentInstructions, instruction, memory, goals, notion, modelContext.summaryMessage, ...modelContext.activeMessages].filter(Boolean), { signal: controller.signal })) {
+    for await (const delta of streamCompletion(providerRuntime.get(), [responseFormat, agentInstructions, instruction, memory, goals, notion, modelContext.summaryMessage, ...modelContext.activeMessages].filter(Boolean), { signal: controller.signal })) {
       fullText += delta;
       onDelta(delta);
     }
@@ -331,15 +340,17 @@ async function handle(request, response) {
     return json(response, 200, store.listMemories(url.searchParams.get("q") ?? ""));
   }
   if (url.pathname === "/api/agent-instructions" && request.method === "GET") {
-    return json(response, 200, { instructions: store.getSetting("agent-instructions") ?? "" });
+    return json(response, 200, { instructions: store.getSetting("agent-instructions") ?? "", markdownPreferred: store.getSetting("markdown-preferred") ?? true });
   }
   if (url.pathname === "/api/agent-instructions" && request.method === "PUT") {
     const body = await readJson(request);
     if (typeof body.instructions !== "string") return json(response, 400, { error: "instructions must be a string." });
     const instructions = body.instructions.trim();
     if (instructions.length > 16_000) return json(response, 400, { error: "instructions must be at most 16,000 characters." });
+    if (typeof body.markdownPreferred !== "boolean") return json(response, 400, { error: "markdownPreferred must be a boolean." });
     store.setSetting("agent-instructions", instructions);
-    return json(response, 200, { instructions });
+    store.setSetting("markdown-preferred", body.markdownPreferred);
+    return json(response, 200, { instructions, markdownPreferred: body.markdownPreferred });
   }
   if (url.pathname === "/api/goals" && request.method === "GET") return json(response, 200, store.listGoals());
   if (url.pathname === "/api/goals" && request.method === "POST") {

@@ -32,7 +32,7 @@
 - [x] OpenAI 호환 API 연결
 - [ ] Anthropic 호환 API 연결
 - [x] 로컬 모델 연결(Ollama)(중요,모델 연결과 동시에 멀티모달의 경우, pdf,사진등을 읽는건 매우 중요함)
-- [ ] 로컬 모델 연결(LLM Studio / llama.cpp / vLLM / SGLang 등)
+- [x] 로컬 모델 연결(LM Studio; llama.cpp / vLLM / SGLang은 OpenAI 호환 연결로 사용)
 - [x] 모델별 API 키 관리
 - [ ] 모델 사용량·오류 상태 확인
 
