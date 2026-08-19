@@ -33,6 +33,8 @@ ChatGPT/Codex 구독 로그인과 API 사용량은 별개일 수 있으므로, �
 
 공식 학교 Gateway 문서의 모델 허용 범위는 조직별로 달라질 수 있습니다. [Gateway 개요](https://docs.mindlogic.ai/docs/chosun-ac/api-gateway/getting-started/overview#api-gateway)
 
+FLUX에서 사설/학교 API의 기준 구현은 이 Gateway입니다. 다른 대학 API도 동일한 OpenAI 호환 계약(모델 목록, Bearer 인증, Chat Completions)을 제공할 때만 `OpenAI 호환 Chat Completions API` 설정으로 연결하세요. 문서 확인 없이 학교별 전용 주소나 요청 형식을 추측해 추가하지 않습니다.
+
 ## 3. Ollama — 로컬 모델
 
 설정 화면에서 **Ollama**를 고릅니다.

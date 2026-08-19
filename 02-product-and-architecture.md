@@ -250,6 +250,8 @@ packages/
 - TypeScript/Node/SQLite 기반의 로컬 게이트웨이
 - 승인 엔진을 모델/도구보다 상위에 둠
 - P0은 API 키 기반 모델 연결을 기준으로 함
+- 사설/학교 제공 API의 기준 구현은 **조선대학교 FactChat API Gateway**로 한다. 기본 경로는 OpenAI 호환 Chat Completions이며, Codex 계열은 Responses API 전용 어댑터로 분리한다.
+- 다른 대학·기관 API는 조선대 Gateway와 같은 요청 계약, 인증 방식, 모델 목록 조회를 제공할 때 호환 설정으로 연결한다. 개별 기관 전용 추측 구현은 추가하지 않는다.
 
 ### 실제 구현 전 사용자 선택이 필요한 것
 
