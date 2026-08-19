@@ -33,12 +33,17 @@ Ollama를 쓰려면 `.env`에서 `FLUX_PROVIDER=ollama`와 모델 이름을 설�
 
 API 설정 화면과 공급자별 복붙 예시는 [API 연결 안내](./docs/API_SETUP.md)에 있습니다.
 
+## 프로젝트 지침
+
+대시보드에서 새 대화를 만들 때 프로젝트를 선택하면, 그 프로젝트 루트의 `AGENTS.md`를 자동으로 대화 문맥에 넣습니다. `AGENTS.md`가 없으면 `FLUX.md`를 사용합니다. 파일은 최대 64 KiB의 일반 텍스트만 읽으며, 지침 파일의 내용은 FLUX의 승인·보안 규칙을 바꿀 수 없습니다.
+
 ## 현재 포함된 P0 뼈대
 
 - SQLite 기반 세션/메시지/승인/감사 기록
 - 로컬 웹 대시보드, 세션 생성·전환, 스트리밍 채팅
 - demo / Ollama / OpenAI 호환 Responses API 어댑터
 - 프로젝트 폴더 탐색·텍스트 파일 읽기와 변경 전후 diff 승인 요청
+- 프로젝트별 `AGENTS.md` 또는 `FLUX.md` 지침을 대화에 자동 반영
 - 삭제·덮어쓰기·외부 효과를 자동 실행하지 않는 승인 정책
 
 자세한 방향은 [설계 문서](./02-product-and-architecture.md)를 참고하세요.

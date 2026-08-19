@@ -7,6 +7,7 @@ import { getAsset, isSea } from "node:sea";
 import { loadConfig } from "./config.mjs";
 import { openStore } from "./db.mjs";
 import { classifyAction, redactSecret, requiresApproval, resolveInsideWorkspace } from "./security.mjs";
+import { projectInstructionMessage, readProjectInstructions } from "./project-instructions.mjs";
 import { createProviderRuntime, providerStatus, publicProviderSettings, streamCompletion, testProviderConnection } from "./providers.mjs";
 
 const config = loadConfig();
@@ -225,6 +226,11 @@ async function handle(request, response) {
     const file = await readTextFile(target);
     return json(response, 200, { path: path.relative(await fs.realpath(project.workspacePath), target), ...file, hash: contentHash(file.content) });
   }
+  const projectInstructionsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/instructions$/);
+  if (projectInstructionsMatch && request.method === "GET") {
+    const project = requireProject(projectInstructionsMatch[1]);
+    return json(response, 200, await readProjectInstructions(project.workspacePath));
+  }
   if (url.pathname === "/api/sessions" && request.method === "GET") return json(response, 200, store.listSessions());
   if (url.pathname === "/api/sessions" && request.method === "POST") {
     const body = await readJson(request);
@@ -241,10 +247,12 @@ async function handle(request, response) {
     if (!session || !body.content?.trim()) return json(response, 400, { error: "A valid sessionId and content are required." });
     store.addMessage({ sessionId: session.id, role: "user", content: body.content.trim() });
     const messages = store.listMessages(session.id);
+    const project = session.projectId ? requireProject(session.projectId) : null;
+    const instruction = project ? projectInstructionMessage(await readProjectInstructions(project.workspacePath)) : null;
     response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", connection: "keep-alive" });
     let fullText = "";
     try {
-      for await (const delta of streamCompletion(providerRuntime.get(), messages)) {
+      for await (const delta of streamCompletion(providerRuntime.get(), instruction ? [instruction, ...messages] : messages)) {
         fullText += delta;
         sse(response, "delta", { text: delta });
       }

@@ -1,5 +1,5 @@
 function asConversation(messages) {
-  return messages.map((message) => ({ role: message.role === "assistant" ? "assistant" : "user", content: message.content }));
+  return messages.map((message) => ({ role: message.role === "assistant" ? "assistant" : message.role === "system" ? "system" : "user", content: message.content }));
 }
 
 const PROVIDERS = new Set(["demo", "ollama", "openai-compatible", "openai-chat-compatible"]);
