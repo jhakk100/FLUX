@@ -20,3 +20,19 @@ test("sessions can be renamed, searched, archived, and restored", async (context
   assert.equal(store.archiveSession(session.id, false).archivedAt, null);
   store.close();
 });
+
+test("each Discord channel and user pair keeps an isolated reusable session", async (context) => {
+  const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "flux-discord-sessions-"));
+  context.after(() => fs.rm(dataDirectory, { recursive: true, force: true }));
+  const store = openStore(dataDirectory);
+  const first = store.getOrCreateDiscordSession({ channelId: "channel-a", userId: "user-a", title: "Discord · a" });
+  const again = store.getOrCreateDiscordSession({ channelId: "channel-a", userId: "user-a", title: "Discord · a" });
+  const anotherUser = store.getOrCreateDiscordSession({ channelId: "channel-a", userId: "user-b", title: "Discord · b" });
+  const anotherChannel = store.getOrCreateDiscordSession({ channelId: "channel-b", userId: "user-a", title: "Discord · a" });
+
+  assert.equal(first.source, "discord");
+  assert.equal(again.id, first.id);
+  assert.notEqual(anotherUser.id, first.id);
+  assert.notEqual(anotherChannel.id, first.id);
+  store.close();
+});

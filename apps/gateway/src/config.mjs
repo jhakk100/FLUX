@@ -42,6 +42,12 @@ export function loadConfig(env = process.env) {
       baseUrl: setting("FACTCHAT_BASE_URL", "https://factchat-cloud.mindlogic.ai/v1/gateway").replace(/\/$/, ""),
       model: setting("FACTCHAT_MODEL", ""),
     },
+    discord: {
+      token: setting("DISCORD_BOT_TOKEN", "").trim(),
+      // A bot never becomes public merely because its token was set.
+      allowedUserIds: setting("DISCORD_ALLOWED_USER_IDS", "").split(",").map((value) => value.trim()).filter(Boolean),
+      allowedChannelIds: setting("DISCORD_ALLOWED_CHANNEL_IDS", "").split(",").map((value) => value.trim()).filter(Boolean),
+    },
   };
 }
 

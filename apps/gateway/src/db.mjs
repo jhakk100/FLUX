@@ -68,6 +68,13 @@ export function openStore(dataDirectory) {
       tags TEXT NOT NULL DEFAULT '[]',
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS discord_sessions (
+      channel_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (channel_id, user_id)
+    );
   `);
   const sessionColumns = database.prepare("PRAGMA table_info(sessions)").all();
   if (!sessionColumns.some((column) => column.name === "archived_at")) {
@@ -158,6 +165,19 @@ export function openStore(dataDirectory) {
 
   function listMessages(sessionId) {
     return database.prepare("SELECT id, session_id AS sessionId, role, content, created_at AS createdAt FROM messages WHERE session_id = ? ORDER BY created_at ASC").all(sessionId);
+  }
+
+  function getOrCreateDiscordSession({ channelId, userId, title }) {
+    const linked = database.prepare("SELECT session_id AS sessionId FROM discord_sessions WHERE channel_id = ? AND user_id = ?").get(channelId, userId);
+    if (linked) {
+      const session = getSession(linked.sessionId);
+      if (session && !session.archivedAt) return session;
+    }
+    const session = createSession({ title, source: "discord" });
+    database.prepare("INSERT INTO discord_sessions (channel_id, user_id, session_id, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(channel_id, user_id) DO UPDATE SET session_id = excluded.session_id, updated_at = excluded.updated_at")
+      .run(channelId, userId, session.id, now());
+    audit("discord.session_linked", "session", session.id, { channelId, userId });
+    return session;
   }
 
   function getSessionContext(sessionId) {
@@ -251,5 +271,5 @@ export function openStore(dataDirectory) {
     audit("setting.updated", "setting", key, { key });
   }
 
-  return { close: () => database.close(), createProject, listProjects, getProject, createSession, listSessions, getSession, renameSession, archiveSession, searchSessions, addMessage, listMessages, getSessionContext, saveSessionContext, listMemories, createMemory, updateMemory, deleteMemory, createApproval, listApprovals, getApproval, decideApproval, listAuditEvents, getSetting, setSetting };
+  return { close: () => database.close(), createProject, listProjects, getProject, createSession, listSessions, getSession, renameSession, archiveSession, searchSessions, addMessage, listMessages, getOrCreateDiscordSession, getSessionContext, saveSessionContext, listMemories, createMemory, updateMemory, deleteMemory, createApproval, listApprovals, getApproval, decideApproval, listAuditEvents, getSetting, setSetting };
 }

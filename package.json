@@ -11,9 +11,12 @@
   "scripts": {
     "start": "node apps/gateway/src/index.mjs",
     "dev": "node --watch apps/gateway/src/index.mjs",
-    "check": "node --check apps/gateway/src/index.mjs && node --check apps/gateway/src/db.mjs && node --check apps/gateway/src/providers.mjs && node --check apps/gateway/src/security.mjs && node --check apps/gateway/src/project-instructions.mjs && node --check apps/gateway/src/context.mjs",
+    "check": "node --check apps/gateway/src/index.mjs && node --check apps/gateway/src/db.mjs && node --check apps/gateway/src/providers.mjs && node --check apps/gateway/src/security.mjs && node --check apps/gateway/src/project-instructions.mjs && node --check apps/gateway/src/context.mjs && node --check apps/gateway/src/discord.mjs",
     "test": "node --test apps/gateway/test/*.test.mjs",
     "build:win": "node scripts/build-windows-exe.mjs"
+  },
+  "dependencies": {
+    "discord.js": "14.27.0"
   },
   "devDependencies": {
     "esbuild": "^0.28.2",

@@ -10,6 +10,7 @@ import { classifyAction, redactSecret, requiresApproval, resolveInsideWorkspace 
 import { projectInstructionMessage, readProjectInstructions } from "./project-instructions.mjs";
 import { buildModelContext } from "./context.mjs";
 import { createProviderRuntime, getFactchatAccount, providerStatus, publicProviderSettings, streamCompletion, testProviderConnection } from "./providers.mjs";
+import { discordStatus, startDiscordBot } from "./discord.mjs";
 
 const config = loadConfig();
 const store = openStore(config.dataDirectory);
@@ -146,6 +147,34 @@ function memoryContextMessage(memories) {
   };
 }
 
+async function generateAssistantReply(session, content, { onDelta = () => {} } = {}) {
+  if (session.archivedAt) throw requestError("Archived sessions must be restored before sending a message.", 409);
+  if (activeChatControllers.has(session.id)) throw requestError("This session already has an active generation.", 409);
+  store.addMessage({ sessionId: session.id, role: "user", content: content.trim() });
+  const messages = store.listMessages(session.id);
+  const currentContext = store.getSessionContext(session.id);
+  const modelContext = buildModelContext(messages, currentContext, config.contextTokenBudget, config.contextCompactThreshold);
+  if (modelContext.context.changed) store.saveSessionContext(session.id, modelContext.context);
+  const project = session.projectId ? requireProject(session.projectId) : null;
+  const instruction = project ? projectInstructionMessage(await readProjectInstructions(project.workspacePath)) : null;
+  const memory = memoryContextMessage(store.listMemories("", 12));
+  let fullText = "";
+  const controller = new AbortController();
+  activeChatControllers.set(session.id, controller);
+  try {
+    for await (const delta of streamCompletion(providerRuntime.get(), [instruction, memory, modelContext.summaryMessage, ...modelContext.activeMessages].filter(Boolean), { signal: controller.signal })) {
+      fullText += delta;
+      onDelta(delta);
+    }
+    return { message: store.addMessage({ sessionId: session.id, role: "assistant", content: fullText }), cancelled: false };
+  } catch (error) {
+    if (controller.signal.aborted) return { message: fullText ? store.addMessage({ sessionId: session.id, role: "assistant", content: fullText }) : null, cancelled: true };
+    throw error;
+  } finally {
+    activeChatControllers.delete(session.id);
+  }
+}
+
 async function searchWorkspace(directory, root, query) {
   const results = [];
   let scanned = 0;
@@ -217,8 +246,9 @@ async function handle(request, response) {
   if (!isAuthorized(request)) return json(response, 401, { error: "Missing or invalid gateway token." });
 
   if (url.pathname === "/api/overview" && request.method === "GET") {
-    return json(response, 200, { provider: providerStatus(providerRuntime.get()), projects: store.listProjects(), sessions: store.listSessions(), approvals: store.listApprovals(), audit: store.listAuditEvents(30) });
+    return json(response, 200, { provider: providerStatus(providerRuntime.get()), discord: discordBot.status(), projects: store.listProjects(), sessions: store.listSessions(), approvals: store.listApprovals(), audit: store.listAuditEvents(30) });
   }
+  if (url.pathname === "/api/discord/status" && request.method === "GET") return json(response, 200, discordBot.status());
   if (url.pathname === "/api/provider-settings" && request.method === "GET") return json(response, 200, publicProviderSettings(providerRuntime.get()));
   if (url.pathname === "/api/provider-settings" && request.method === "POST") {
     const body = await readJson(request);
@@ -366,36 +396,12 @@ async function handle(request, response) {
     const body = await readJson(request);
     const session = store.getSession(body.sessionId);
     if (!session || !body.content?.trim()) return json(response, 400, { error: "A valid sessionId and content are required." });
-    if (session.archivedAt) return json(response, 409, { error: "Archived sessions must be restored before sending a message." });
-    if (activeChatControllers.has(session.id)) return json(response, 409, { error: "This session already has an active generation." });
-    store.addMessage({ sessionId: session.id, role: "user", content: body.content.trim() });
-    const messages = store.listMessages(session.id);
-    const currentContext = store.getSessionContext(session.id);
-    const modelContext = buildModelContext(messages, currentContext, config.contextTokenBudget, config.contextCompactThreshold);
-    if (modelContext.context.changed) store.saveSessionContext(session.id, modelContext.context);
-    const project = session.projectId ? requireProject(session.projectId) : null;
-    const instruction = project ? projectInstructionMessage(await readProjectInstructions(project.workspacePath)) : null;
-    const memory = memoryContextMessage(store.listMemories("", 12));
     response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", connection: "keep-alive" });
-    let fullText = "";
-    const controller = new AbortController();
-    activeChatControllers.set(session.id, controller);
     try {
-      for await (const delta of streamCompletion(providerRuntime.get(), [instruction, memory, modelContext.summaryMessage, ...modelContext.activeMessages].filter(Boolean), { signal: controller.signal })) {
-        fullText += delta;
-        sse(response, "delta", { text: delta });
-      }
-      const assistantMessage = store.addMessage({ sessionId: session.id, role: "assistant", content: fullText });
-      sse(response, "done", { message: assistantMessage });
+      const result = await generateAssistantReply(session, body.content, { onDelta: (delta) => sse(response, "delta", { text: delta }) });
+      sse(response, "done", result);
     } catch (error) {
-      if (controller.signal.aborted) {
-        const assistantMessage = fullText ? store.addMessage({ sessionId: session.id, role: "assistant", content: fullText }) : null;
-        sse(response, "done", { message: assistantMessage, cancelled: true });
-      } else {
-        sse(response, "error", { error: redactSecret(error.message) });
-      }
-    } finally {
-      activeChatControllers.delete(session.id);
+      sse(response, "error", { error: redactSecret(error.message) });
     }
     return response.end();
   }
@@ -457,9 +463,16 @@ const server = http.createServer((request, response) => {
   handle(request, response).catch((error) => json(response, error.statusCode ?? 500, { error: redactSecret(error.message ?? "Unexpected server error.") }));
 });
 
+const discordBot = startDiscordBot(config.discord, async ({ channelId, userId, username, content }) => {
+  const session = store.getOrCreateDiscordSession({ channelId, userId, title: `Discord · ${username}` });
+  const result = await generateAssistantReply(session, content);
+  return result.message?.content || (result.cancelled ? "응답 생성을 중지했습니다." : "응답을 만들지 못했습니다.");
+});
+
 server.listen(config.port, config.host, () => {
   const gatewayUrl = `http://${config.host}:${config.port}`;
   console.log(`FLUX Gateway is running at ${gatewayUrl}`);
   console.log(`Provider: ${providerStatus(providerRuntime.get()).provider}`);
+  console.log(`Discord: ${discordStatus(config.discord).enabled ? "configured" : "disabled"}`);
   openDashboard(gatewayUrl);
 });
