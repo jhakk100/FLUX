@@ -19,6 +19,9 @@ export function loadConfig(env = process.env) {
   const contextCompactThreshold = Number.parseFloat(setting("CONTEXT_COMPACT_THRESHOLD", "0.75"));
   if (!Number.isInteger(contextTokenBudget) || contextTokenBudget < 1000) throw new Error("FLUX_CONTEXT_TOKEN_BUDGET must be at least 1000.");
   if (!Number.isFinite(contextCompactThreshold) || contextCompactThreshold <= 0 || contextCompactThreshold >= 1) throw new Error("FLUX_CONTEXT_COMPACT_THRESHOLD must be between 0 and 1.");
+  const ollamaContextLengthText = setting("OLLAMA_CONTEXT_LENGTH", "").trim();
+  const ollamaContextLength = ollamaContextLengthText ? Number.parseInt(ollamaContextLengthText, 10) : null;
+  if (ollamaContextLength !== null && (!Number.isInteger(ollamaContextLength) || ollamaContextLength < 1024)) throw new Error("FLUX_OLLAMA_CONTEXT_LENGTH must be at least 1024 when set.");
 
   return {
     host,
@@ -31,6 +34,7 @@ export function loadConfig(env = process.env) {
     ollama: {
       baseUrl: setting("OLLAMA_BASE_URL", "http://127.0.0.1:11434").replace(/\/$/, ""),
       model: setting("OLLAMA_MODEL", ""),
+      contextLength: ollamaContextLength,
     },
     openai: {
       apiKey: setting("OPENAI_API_KEY", ""),

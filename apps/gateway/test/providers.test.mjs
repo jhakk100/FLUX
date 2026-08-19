@@ -33,6 +33,15 @@ test("an empty API key leaves an existing saved key intact until explicitly clea
   assert.equal(runtime.get().openai.apiKey, "");
 });
 
+test("Ollama context length is retained separately from FLUX compaction settings", () => {
+  const runtime = createProviderRuntime(baseConfig);
+  runtime.configure({ provider: "ollama", ollamaModel: "llama", ollamaContextLength: "32768" });
+  assert.equal(runtime.get().ollama.contextLength, 32768);
+  assert.equal(publicProviderSettings(runtime.get()).ollamaContextLength, 32768);
+  runtime.configure({ ollamaContextLength: "" });
+  assert.equal(runtime.get().ollama.contextLength, null);
+});
+
 test("a provider stream accepts a cancellation signal", async () => {
   const controller = new AbortController();
   const stream = streamCompletion(baseConfig, [{ role: "user", content: "long response" }], { signal: controller.signal });

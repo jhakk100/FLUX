@@ -8,6 +8,13 @@ function normalizeBaseUrl(value) {
   return String(value ?? "").trim().replace(/\/$/, "");
 }
 
+function normalizeContextLength(value) {
+  if (value === "" || value === null || typeof value === "undefined") return null;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed < 1024) throw new Error("Ollama context length must be at least 1024 tokens, or left blank.");
+  return parsed;
+}
+
 function cloneConfig(config) {
   return {
     provider: config.provider,
@@ -35,6 +42,7 @@ export function createProviderRuntime(environmentConfig, persistedConfig) {
     next.provider = provider;
     next.ollama.baseUrl = normalizeBaseUrl(input.ollamaBaseUrl ?? next.ollama.baseUrl);
     next.ollama.model = String(input.ollamaModel ?? next.ollama.model).trim();
+    if (Object.hasOwn(input, "ollamaContextLength")) next.ollama.contextLength = normalizeContextLength(input.ollamaContextLength);
     next.openai.baseUrl = normalizeBaseUrl(input.openaiBaseUrl ?? next.openai.baseUrl);
     next.openai.model = String(input.openaiModel ?? next.openai.model).trim();
     next.factchat.baseUrl = normalizeBaseUrl(input.factchatBaseUrl ?? next.factchat.baseUrl);
@@ -80,7 +88,7 @@ async function* ollamaStream(config, messages, signal) {
   const response = await fetch(`${config.ollama.baseUrl}/api/chat`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ model: config.ollama.model, messages: asConversation(messages), stream: true }),
+    body: JSON.stringify({ model: config.ollama.model, messages: asConversation(messages), stream: true, ...(config.ollama.contextLength ? { options: { num_ctx: config.ollama.contextLength } } : {}) }),
     signal: requestSignal(signal),
   });
   if (!response.ok || !response.body) throw new Error(`Ollama returned ${response.status}: ${await response.text()}`);
@@ -201,7 +209,7 @@ export function streamCompletion(config, messages, { signal } = {}) {
 }
 
 export function providerStatus(config) {
-  if (config.provider === "ollama") return { provider: "ollama", configured: Boolean(config.ollama.model), model: config.ollama.model || null, baseUrl: config.ollama.baseUrl };
+  if (config.provider === "ollama") return { provider: "ollama", configured: Boolean(config.ollama.model), model: config.ollama.model || null, baseUrl: config.ollama.baseUrl, contextLength: config.ollama.contextLength ?? null };
   if (["openai-compatible", "openai-chat-compatible"].includes(config.provider)) return { provider: config.provider, configured: Boolean(config.openai.apiKey && config.openai.model), model: config.openai.model || null, baseUrl: config.openai.baseUrl, apiKeyConfigured: Boolean(config.openai.apiKey) };
   if (config.provider === "factchat") return { provider: "factchat", configured: Boolean(config.factchat.apiKey && config.factchat.model), model: config.factchat.model || null, baseUrl: config.factchat.baseUrl, apiKeyConfigured: Boolean(config.factchat.apiKey) };
   if (config.provider === "factchat-responses") return { provider: "factchat-responses", configured: Boolean(config.factchat.apiKey && config.factchat.model), model: config.factchat.model || null, baseUrl: config.factchat.baseUrl, apiKeyConfigured: Boolean(config.factchat.apiKey) };
@@ -213,6 +221,7 @@ export function publicProviderSettings(config) {
     provider: config.provider,
     ollamaBaseUrl: config.ollama.baseUrl,
     ollamaModel: config.ollama.model,
+    ollamaContextLength: config.ollama.contextLength ?? null,
     openaiBaseUrl: config.openai.baseUrl,
     openaiModel: config.openai.model,
     apiKeyConfigured: Boolean(config.openai.apiKey),

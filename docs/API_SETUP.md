@@ -49,6 +49,8 @@ FLUX의 `GET /api/provider-account`는 선택된 학교 API 키로 Gateway의 `/
 
 연결 시험은 Ollama 서버가 켜져 있는지와 설정한 모델이 목록에 있는지를 확인합니다. PDF·이미지 처리가 필요하면 비전/멀티모달 지원 모델을 설치해 모델 이름에 입력하세요.
 
+FLUX의 대화 압축 기준과 Ollama의 실제 문맥 창은 별개입니다. AI API 설정의 **Ollama에 요청할 문맥 길이** 또는 `.env`의 `FLUX_OLLAMA_CONTEXT_LENGTH`를 설정하면 FLUX는 각 `/api/chat` 요청에 `options.num_ctx`를 넣습니다. 값이 클수록 GPU/RAM 사용량이 늘어날 수 있으므로 모델·PC 사양에 맞춰 정하세요. LM Studio 등 OpenAI 호환 서버는 표준 Chat Completions 요청에 이 설정이 없으므로 서버별 설정 화면에서 따로 문맥 길이를 지정해야 합니다. [Ollama 문맥 길이 안내](https://docs.ollama.com/faq)
+
 ## 4. 사설 API (일반) — Chat Completions 호환 서버
 
 제공처의 문서에서 다음 중 어느 경로를 지원하는지 먼저 확인하세요.

@@ -20,3 +20,9 @@ test("legacy local configuration remains readable during the rename", () => {
   assert.equal(config.port, 4319);
   assert.equal(config.provider, "demo");
 });
+
+test("Ollama context length is optional and validated", () => {
+  assert.equal(loadConfig({ FLUX_OLLAMA_CONTEXT_LENGTH: "32768" }).ollama.contextLength, 32768);
+  assert.equal(loadConfig({}).ollama.contextLength, null);
+  assert.throws(() => loadConfig({ FLUX_OLLAMA_CONTEXT_LENGTH: "100" }), /at least 1024/);
+});
