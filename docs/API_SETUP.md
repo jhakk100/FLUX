@@ -23,7 +23,7 @@ FLUX는 이 방식에서 `POST /v1/responses`와 스트리밍 응답을 사용�
 
 ChatGPT/Codex 구독 로그인과 API 사용량은 별개일 수 있으므로, 이 앱에는 Platform API 키를 입력하는 방식으로 시작합니다. 키는 절대 대화 메시지나 Git 커밋에 넣지 마세요.
 
-## 2. 조선대학교 FactChat API Gateway — 학교 제공 API
+## 2. 사설 API (대학교) — 조선대학교 FactChat 기준
 
 대시보드에서 **조선대 FactChat Gateway**를 고르고 학교에서 발급받은 API 키를 입력합니다. 기본 주소는 `https://factchat-cloud.mindlogic.ai/v1/gateway`입니다. 연결 시험은 `/models/`에서 본인 조직에 허용된 모델 목록을 확인합니다. 목록의 `id`를 그대로 모델 이름에 입력하세요.
 
@@ -33,7 +33,7 @@ ChatGPT/Codex 구독 로그인과 API 사용량은 별개일 수 있으므로, �
 
 공식 학교 Gateway 문서의 모델 허용 범위는 조직별로 달라질 수 있습니다. [Gateway 개요](https://docs.mindlogic.ai/docs/chosun-ac/api-gateway/getting-started/overview#api-gateway)
 
-FLUX에서 사설/학교 API의 기준 구현은 이 Gateway입니다. 다른 대학 API도 동일한 OpenAI 호환 계약(모델 목록, Bearer 인증, Chat Completions)을 제공할 때만 `OpenAI 호환 Chat Completions API` 설정으로 연결하세요. 문서 확인 없이 학교별 전용 주소나 요청 형식을 추측해 추가하지 않습니다.
+FLUX에서 `사설 API (대학교)`의 기준 구현은 이 Gateway입니다. 다른 대학 API도 동일한 Gateway 계약(모델 목록, Bearer 인증, Chat Completions)을 제공할 때만 이 공급자로 연결하세요. 문서 확인 없이 학교별 전용 주소나 요청 형식을 추측해 추가하지 않습니다.
 
 ## 3. Ollama — 로컬 모델
 
@@ -47,7 +47,7 @@ FLUX에서 사설/학교 API의 기준 구현은 이 Gateway입니다. 다른 �
 
 연결 시험은 Ollama 서버가 켜져 있는지와 설정한 모델이 목록에 있는지를 확인합니다. PDF·이미지 처리가 필요하면 비전/멀티모달 지원 모델을 설치해 모델 이름에 입력하세요.
 
-## 4. LM Studio·기타 호환 서버
+## 4. 사설 API (일반) — Chat Completions 호환 서버
 
 제공처의 문서에서 다음 중 어느 경로를 지원하는지 먼저 확인하세요.
 
