@@ -37,6 +37,11 @@ export function loadConfig(env = process.env) {
       baseUrl: setting("OPENAI_BASE_URL", "https://api.openai.com/v1").replace(/\/$/, ""),
       model: setting("OPENAI_MODEL", ""),
     },
+    factchat: {
+      apiKey: setting("FACTCHAT_API_KEY", ""),
+      baseUrl: setting("FACTCHAT_BASE_URL", "https://factchat-cloud.mindlogic.ai/v1/gateway").replace(/\/$/, ""),
+      model: setting("FACTCHAT_MODEL", ""),
+    },
   };
 }
 

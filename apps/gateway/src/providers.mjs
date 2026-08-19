@@ -2,7 +2,7 @@ function asConversation(messages) {
   return messages.map((message) => ({ role: message.role === "assistant" ? "assistant" : message.role === "system" ? "system" : "user", content: message.content }));
 }
 
-const PROVIDERS = new Set(["demo", "ollama", "openai-compatible", "openai-chat-compatible"]);
+const PROVIDERS = new Set(["demo", "ollama", "openai-compatible", "openai-chat-compatible", "factchat"]);
 
 function normalizeBaseUrl(value) {
   return String(value ?? "").trim().replace(/\/$/, "");
@@ -13,6 +13,7 @@ function cloneConfig(config) {
     provider: config.provider,
     ollama: { ...config.ollama },
     openai: { ...config.openai },
+    factchat: { ...config.factchat },
   };
 }
 
@@ -23,6 +24,7 @@ export function createProviderRuntime(environmentConfig, persistedConfig) {
       provider: persistedConfig.provider ?? current.provider,
       ollama: { ...current.ollama, ...persistedConfig.ollama },
       openai: { ...current.openai, ...persistedConfig.openai },
+      factchat: { ...current.factchat, ...persistedConfig.factchat },
     };
   }
 
@@ -35,8 +37,12 @@ export function createProviderRuntime(environmentConfig, persistedConfig) {
     next.ollama.model = String(input.ollamaModel ?? next.ollama.model).trim();
     next.openai.baseUrl = normalizeBaseUrl(input.openaiBaseUrl ?? next.openai.baseUrl);
     next.openai.model = String(input.openaiModel ?? next.openai.model).trim();
+    next.factchat.baseUrl = normalizeBaseUrl(input.factchatBaseUrl ?? next.factchat.baseUrl);
+    next.factchat.model = String(input.factchatModel ?? next.factchat.model).trim();
     if (input.clearApiKey === true) next.openai.apiKey = "";
     else if (typeof input.apiKey === "string" && input.apiKey.trim()) next.openai.apiKey = input.apiKey.trim();
+    if (input.clearFactchatApiKey === true) next.factchat.apiKey = "";
+    else if (typeof input.factchatApiKey === "string" && input.factchatApiKey.trim()) next.factchat.apiKey = input.factchatApiKey.trim();
     current = next;
     return cloneConfig(current);
   }
@@ -169,16 +175,26 @@ async function* openAiChatCompatibleStream(config, messages, signal) {
   }
 }
 
+async function* factchatStream(config, messages, signal) {
+  if (!config.factchat.apiKey || !config.factchat.model) throw new Error("FactChat API 키와 모델 이름을 입력하세요.");
+  const response = await fetch(`${config.factchat.baseUrl}/chat/completions/`, { method: "POST", headers: { authorization: `Bearer ${config.factchat.apiKey}`, "content-type": "application/json" }, body: JSON.stringify({ model: config.factchat.model, stream: true, messages: asConversation(messages) }), signal: requestSignal(signal) });
+  if (!response.ok || !response.body) throw new Error(`FactChat returned ${response.status}: ${await response.text()}`);
+  const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
+  while (true) { const { done, value } = await reader.read(); buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done }); const events = buffer.split("\n\n"); buffer = events.pop() ?? ""; for (const rawEvent of events) { const data = rawEvent.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n"); if (!data || data === "[DONE]") continue; const event = JSON.parse(data); if (event.error) throw new Error(event.error.message ?? "FactChat returned an error."); if (event.choices?.[0]?.delta?.content) yield event.choices[0].delta.content; } if (done) break; }
+}
+
 export function streamCompletion(config, messages, { signal } = {}) {
   if (config.provider === "ollama") return ollamaStream(config, messages, signal);
   if (config.provider === "openai-compatible") return openAiCompatibleStream(config, messages, signal);
   if (config.provider === "openai-chat-compatible") return openAiChatCompatibleStream(config, messages, signal);
+  if (config.provider === "factchat") return factchatStream(config, messages, signal);
   return demoStream(messages, signal);
 }
 
 export function providerStatus(config) {
   if (config.provider === "ollama") return { provider: "ollama", configured: Boolean(config.ollama.model), model: config.ollama.model || null, baseUrl: config.ollama.baseUrl };
   if (["openai-compatible", "openai-chat-compatible"].includes(config.provider)) return { provider: config.provider, configured: Boolean(config.openai.apiKey && config.openai.model), model: config.openai.model || null, baseUrl: config.openai.baseUrl, apiKeyConfigured: Boolean(config.openai.apiKey) };
+  if (config.provider === "factchat") return { provider: "factchat", configured: Boolean(config.factchat.apiKey && config.factchat.model), model: config.factchat.model || null, baseUrl: config.factchat.baseUrl, apiKeyConfigured: Boolean(config.factchat.apiKey) };
   return { provider: "demo", configured: true, model: null };
 }
 
@@ -190,6 +206,9 @@ export function publicProviderSettings(config) {
     openaiBaseUrl: config.openai.baseUrl,
     openaiModel: config.openai.model,
     apiKeyConfigured: Boolean(config.openai.apiKey),
+    factchatBaseUrl: config.factchat.baseUrl,
+    factchatModel: config.factchat.model,
+    factchatApiKeyConfigured: Boolean(config.factchat.apiKey),
   };
 }
 
@@ -201,6 +220,12 @@ export async function testProviderConnection(config) {
     const payload = await response.json();
     const modelFound = config.ollama.model ? payload.models?.some((model) => model.name === config.ollama.model || model.model === config.ollama.model) : true;
     return { ok: true, message: modelFound ? "Ollama 연결과 모델 확인이 완료되었습니다." : "Ollama에는 연결됐지만 지정한 모델을 찾지 못했습니다. 모델 이름을 확인하세요." };
+  }
+  if (config.provider === "factchat") {
+    if (!config.factchat.apiKey || !config.factchat.model) throw new Error("FactChat API 키와 모델 이름을 입력한 뒤 저장하세요.");
+    const response = await fetch(`${config.factchat.baseUrl}/models/`, { headers: { authorization: `Bearer ${config.factchat.apiKey}` }, signal: AbortSignal.timeout(10_000) });
+    if (!response.ok) throw new Error(`FactChat API가 ${response.status} 응답을 반환했습니다. 키와 접근 권한을 확인하세요.`);
+    return { ok: true, message: "FactChat API 인증과 모델 목록 연결에 성공했습니다." };
   }
   if (!config.openai.apiKey || !config.openai.model) throw new Error("API 키와 모델 이름을 입력한 뒤 저장하세요.");
   const response = await fetch(`${config.openai.baseUrl}/models`, {
