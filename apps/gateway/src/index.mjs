@@ -231,20 +231,45 @@ async function handle(request, response) {
     const project = requireProject(projectInstructionsMatch[1]);
     return json(response, 200, await readProjectInstructions(project.workspacePath));
   }
-  if (url.pathname === "/api/sessions" && request.method === "GET") return json(response, 200, store.listSessions());
+  if (url.pathname === "/api/sessions" && request.method === "GET") {
+    return json(response, 200, store.listSessions({ archived: url.searchParams.get("archived") === "true" }));
+  }
   if (url.pathname === "/api/sessions" && request.method === "POST") {
     const body = await readJson(request);
     return json(response, 201, store.createSession({ projectId: body.projectId ?? null, title: body.title?.trim() || "새 대화", source: body.source ?? "web" }));
   }
-  const sessionMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/messages$/);
-  if (sessionMatch && request.method === "GET") {
-    if (!store.getSession(sessionMatch[1])) return json(response, 404, { error: "Session not found." });
-    return json(response, 200, store.listMessages(sessionMatch[1]));
+  if (url.pathname === "/api/sessions/search" && request.method === "GET") {
+    const query = url.searchParams.get("q")?.trim() || "";
+    if (!query) return json(response, 200, []);
+    return json(response, 200, store.searchSessions(query, { archived: url.searchParams.get("archived") === "true" }));
+  }
+  const sessionMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)$/);
+  if (sessionMatch && request.method === "PATCH") {
+    const body = await readJson(request);
+    if (typeof body.title === "string") {
+      const title = body.title.trim();
+      if (!title) return json(response, 400, { error: "title must not be empty." });
+      const session = store.renameSession(sessionMatch[1], title);
+      if (!session) return json(response, 404, { error: "Session not found." });
+      return json(response, 200, session);
+    }
+    if (typeof body.archived === "boolean") {
+      const session = store.archiveSession(sessionMatch[1], body.archived);
+      if (!session) return json(response, 404, { error: "Session not found." });
+      return json(response, 200, session);
+    }
+    return json(response, 400, { error: "title or archived is required." });
+  }
+  const sessionMessagesMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/messages$/);
+  if (sessionMessagesMatch && request.method === "GET") {
+    if (!store.getSession(sessionMessagesMatch[1])) return json(response, 404, { error: "Session not found." });
+    return json(response, 200, store.listMessages(sessionMessagesMatch[1]));
   }
   if (url.pathname === "/api/chat" && request.method === "POST") {
     const body = await readJson(request);
     const session = store.getSession(body.sessionId);
     if (!session || !body.content?.trim()) return json(response, 400, { error: "A valid sessionId and content are required." });
+    if (session.archivedAt) return json(response, 409, { error: "Archived sessions must be restored before sending a message." });
     store.addMessage({ sessionId: session.id, role: "user", content: body.content.trim() });
     const messages = store.listMessages(session.id);
     const project = session.projectId ? requireProject(session.projectId) : null;

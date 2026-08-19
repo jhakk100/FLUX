@@ -55,6 +55,10 @@ export function openStore(dataDirectory) {
       updated_at TEXT NOT NULL
     );
   `);
+  const sessionColumns = database.prepare("PRAGMA table_info(sessions)").all();
+  if (!sessionColumns.some((column) => column.name === "archived_at")) {
+    database.exec("ALTER TABLE sessions ADD COLUMN archived_at TEXT");
+  }
 
   const now = () => new Date().toISOString();
   const id = () => randomUUID();
@@ -81,18 +85,52 @@ export function openStore(dataDirectory) {
 
   function createSession({ projectId = null, title = "새 대화", source = "web" }) {
     const session = { id: id(), projectId, title, source, createdAt: now(), updatedAt: now() };
-    database.prepare("INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?)")
-      .run(session.id, session.projectId, session.title, session.source, session.createdAt, session.updatedAt);
+    database.prepare("INSERT INTO sessions (id, project_id, title, source, created_at, updated_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(session.id, session.projectId, session.title, session.source, session.createdAt, session.updatedAt, null);
     audit("session.created", "session", session.id, { projectId, source });
     return session;
   }
 
-  function listSessions() {
-    return database.prepare("SELECT id, project_id AS projectId, title, source, created_at AS createdAt, updated_at AS updatedAt FROM sessions ORDER BY updated_at DESC").all();
+  function listSessions({ archived = false } = {}) {
+    return database.prepare("SELECT id, project_id AS projectId, title, source, created_at AS createdAt, updated_at AS updatedAt, archived_at AS archivedAt FROM sessions WHERE (archived_at IS NOT NULL) = ? ORDER BY updated_at DESC")
+      .all(archived ? 1 : 0);
   }
 
   function getSession(sessionId) {
-    return database.prepare("SELECT id, project_id AS projectId, title, source, created_at AS createdAt, updated_at AS updatedAt FROM sessions WHERE id = ?").get(sessionId);
+    return database.prepare("SELECT id, project_id AS projectId, title, source, created_at AS createdAt, updated_at AS updatedAt, archived_at AS archivedAt FROM sessions WHERE id = ?").get(sessionId);
+  }
+
+  function renameSession(sessionId, title) {
+    const session = getSession(sessionId);
+    if (!session) return null;
+    const updatedAt = now();
+    database.prepare("UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?").run(title, updatedAt, sessionId);
+    audit("session.renamed", "session", sessionId, { title });
+    return getSession(sessionId);
+  }
+
+  function archiveSession(sessionId, archived) {
+    const session = getSession(sessionId);
+    if (!session) return null;
+    const updatedAt = now();
+    const archivedAt = archived ? updatedAt : null;
+    database.prepare("UPDATE sessions SET archived_at = ?, updated_at = ? WHERE id = ?").run(archivedAt, updatedAt, sessionId);
+    audit(archived ? "session.archived" : "session.unarchived", "session", sessionId, {});
+    return getSession(sessionId);
+  }
+
+  function searchSessions(query, { archived = false } = {}) {
+    const like = `%${query.replaceAll("%", "\\%").replaceAll("_", "\\_")}%`;
+    return database.prepare(`
+      SELECT sessions.id, sessions.project_id AS projectId, sessions.title, sessions.source,
+             sessions.created_at AS createdAt, sessions.updated_at AS updatedAt, sessions.archived_at AS archivedAt,
+             substr(messages.content, 1, 180) AS matchedContent
+      FROM sessions LEFT JOIN messages ON messages.session_id = sessions.id
+      WHERE (sessions.archived_at IS NOT NULL) = ? AND (sessions.title LIKE ? ESCAPE '\\' OR messages.content LIKE ? ESCAPE '\\')
+      GROUP BY sessions.id
+      ORDER BY sessions.updated_at DESC
+      LIMIT 50
+    `).all(archived ? 1 : 0, like, like);
   }
 
   function addMessage({ sessionId, role, content }) {
@@ -152,5 +190,5 @@ export function openStore(dataDirectory) {
     audit("setting.updated", "setting", key, { key });
   }
 
-  return { createProject, listProjects, getProject, createSession, listSessions, getSession, addMessage, listMessages, createApproval, listApprovals, getApproval, decideApproval, listAuditEvents, getSetting, setSetting };
+  return { close: () => database.close(), createProject, listProjects, getProject, createSession, listSessions, getSession, renameSession, archiveSession, searchSessions, addMessage, listMessages, createApproval, listApprovals, getApproval, decideApproval, listAuditEvents, getSetting, setSetting };
 }
