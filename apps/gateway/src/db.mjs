@@ -54,6 +54,13 @@ export function openStore(dataDirectory) {
       value TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS memories (
+      id TEXT PRIMARY KEY,
+      content TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'fact',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
   const sessionColumns = database.prepare("PRAGMA table_info(sessions)").all();
   if (!sessionColumns.some((column) => column.name === "archived_at")) {
@@ -146,6 +153,40 @@ export function openStore(dataDirectory) {
     return database.prepare("SELECT id, session_id AS sessionId, role, content, created_at AS createdAt FROM messages WHERE session_id = ? ORDER BY created_at ASC").all(sessionId);
   }
 
+  function listMemories(query = "", limit = 100) {
+    const normalized = query.trim();
+    if (!normalized) {
+      return database.prepare("SELECT id, content, kind, created_at AS createdAt, updated_at AS updatedAt FROM memories ORDER BY updated_at DESC LIMIT ?").all(limit);
+    }
+    const like = `%${normalized.replaceAll("%", "\\%").replaceAll("_", "\\_")}%`;
+    return database.prepare("SELECT id, content, kind, created_at AS createdAt, updated_at AS updatedAt FROM memories WHERE content LIKE ? ESCAPE '\\' OR kind LIKE ? ESCAPE '\\' ORDER BY updated_at DESC LIMIT ?")
+      .all(like, like, limit);
+  }
+
+  function createMemory({ content, kind = "fact" }) {
+    const memory = { id: id(), content, kind, createdAt: now(), updatedAt: now() };
+    database.prepare("INSERT INTO memories VALUES (?, ?, ?, ?, ?)").run(memory.id, memory.content, memory.kind, memory.createdAt, memory.updatedAt);
+    audit("memory.created", "memory", memory.id, { kind, length: content.length });
+    return memory;
+  }
+
+  function updateMemory(memoryId, { content, kind }) {
+    const existing = database.prepare("SELECT id FROM memories WHERE id = ?").get(memoryId);
+    if (!existing) return null;
+    const updatedAt = now();
+    database.prepare("UPDATE memories SET content = ?, kind = ?, updated_at = ? WHERE id = ?").run(content, kind, updatedAt, memoryId);
+    audit("memory.updated", "memory", memoryId, { kind, length: content.length });
+    return database.prepare("SELECT id, content, kind, created_at AS createdAt, updated_at AS updatedAt FROM memories WHERE id = ?").get(memoryId);
+  }
+
+  function deleteMemory(memoryId) {
+    const existing = database.prepare("SELECT id FROM memories WHERE id = ?").get(memoryId);
+    if (!existing) return false;
+    database.prepare("DELETE FROM memories WHERE id = ?").run(memoryId);
+    audit("memory.deleted", "memory", memoryId, {});
+    return true;
+  }
+
   function createApproval({ action, risk, target, preview, payload }) {
     const approval = { id: id(), action, risk, target, preview, payload, status: "pending", createdAt: now() };
     database.prepare("INSERT INTO approvals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
@@ -190,5 +231,5 @@ export function openStore(dataDirectory) {
     audit("setting.updated", "setting", key, { key });
   }
 
-  return { close: () => database.close(), createProject, listProjects, getProject, createSession, listSessions, getSession, renameSession, archiveSession, searchSessions, addMessage, listMessages, createApproval, listApprovals, getApproval, decideApproval, listAuditEvents, getSetting, setSetting };
+  return { close: () => database.close(), createProject, listProjects, getProject, createSession, listSessions, getSession, renameSession, archiveSession, searchSessions, addMessage, listMessages, listMemories, createMemory, updateMemory, deleteMemory, createApproval, listApprovals, getApproval, decideApproval, listAuditEvents, getSetting, setSetting };
 }
