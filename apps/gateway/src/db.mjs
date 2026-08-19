@@ -75,6 +75,14 @@ export function openStore(dataDirectory) {
       updated_at TEXT NOT NULL,
       PRIMARY KEY (channel_id, user_id)
     );
+    CREATE TABLE IF NOT EXISTS goals (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      details TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
   const sessionColumns = database.prepare("PRAGMA table_info(sessions)").all();
   if (!sessionColumns.some((column) => column.name === "archived_at")) {
@@ -236,6 +244,34 @@ export function openStore(dataDirectory) {
     return true;
   }
 
+  function listGoals() {
+    return database.prepare("SELECT id, title, details, status, created_at AS createdAt, updated_at AS updatedAt FROM goals ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END, updated_at DESC").all();
+  }
+
+  function createGoal({ title, details = "", status = "active" }) {
+    const goal = { id: id(), title, details, status, createdAt: now(), updatedAt: now() };
+    database.prepare("INSERT INTO goals VALUES (?, ?, ?, ?, ?, ?)").run(goal.id, goal.title, goal.details, goal.status, goal.createdAt, goal.updatedAt);
+    audit("goal.created", "goal", goal.id, { status });
+    return goal;
+  }
+
+  function updateGoal(goalId, { title, details, status }) {
+    const existing = database.prepare("SELECT id FROM goals WHERE id = ?").get(goalId);
+    if (!existing) return null;
+    const updatedAt = now();
+    database.prepare("UPDATE goals SET title = ?, details = ?, status = ?, updated_at = ? WHERE id = ?").run(title, details, status, updatedAt, goalId);
+    audit("goal.updated", "goal", goalId, { status });
+    return database.prepare("SELECT id, title, details, status, created_at AS createdAt, updated_at AS updatedAt FROM goals WHERE id = ?").get(goalId);
+  }
+
+  function deleteGoal(goalId) {
+    const existing = database.prepare("SELECT id FROM goals WHERE id = ?").get(goalId);
+    if (!existing) return false;
+    database.prepare("DELETE FROM goals WHERE id = ?").run(goalId);
+    audit("goal.deleted", "goal", goalId, {});
+    return true;
+  }
+
   function createApproval({ action, risk, target, preview, payload }) {
     const approval = { id: id(), action, risk, target, preview, payload, status: "pending", createdAt: now() };
     database.prepare("INSERT INTO approvals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
@@ -280,5 +316,5 @@ export function openStore(dataDirectory) {
     audit("setting.updated", "setting", key, { key });
   }
 
-  return { close: () => database.close(), createProject, listProjects, getProject, createSession, listSessions, getSession, renameSession, archiveSession, searchSessions, addMessage, listMessages, deleteMessage, getOrCreateDiscordSession, getSessionContext, saveSessionContext, listMemories, createMemory, updateMemory, deleteMemory, createApproval, listApprovals, getApproval, decideApproval, listAuditEvents, getSetting, setSetting };
+  return { close: () => database.close(), createProject, listProjects, getProject, createSession, listSessions, getSession, renameSession, archiveSession, searchSessions, addMessage, listMessages, deleteMessage, getOrCreateDiscordSession, getSessionContext, saveSessionContext, listMemories, createMemory, updateMemory, deleteMemory, listGoals, createGoal, updateGoal, deleteGoal, createApproval, listApprovals, getApproval, decideApproval, listAuditEvents, getSetting, setSetting };
 }

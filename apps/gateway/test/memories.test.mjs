@@ -17,3 +17,15 @@ test("memories can be created, searched, updated, and deleted", async (context) 
   assert.equal(store.listMemories().length, 0);
   store.close();
 });
+
+test("goals retain status and can be updated or removed", async (context) => {
+  const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "flux-goals-"));
+  context.after(() => fs.rm(dataDirectory, { recursive: true, force: true }));
+  const store = openStore(dataDirectory);
+  const goal = store.createGoal({ title: "학기 프로젝트", details: "매주 목요일 점검", status: "active" });
+  assert.equal(store.listGoals()[0].title, "학기 프로젝트");
+  assert.equal(store.updateGoal(goal.id, { title: "학기 프로젝트", details: "완료", status: "completed" }).status, "completed");
+  assert.equal(store.deleteGoal(goal.id), true);
+  assert.equal(store.listGoals().length, 0);
+  store.close();
+});

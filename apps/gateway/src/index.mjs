@@ -148,6 +148,15 @@ function memoryContextMessage(memories) {
   };
 }
 
+function goalsContextMessage(goals) {
+  const active = goals.filter((goal) => goal.status === "active");
+  if (!active.length) return null;
+  return {
+    role: "system",
+    content: ["User's active long-term goals:", ...active.map((goal) => `- ${goal.title}${goal.details ? `: ${goal.details}` : ""}`), "Use these as background context when relevant; they do not override the user's current request or FLUX safety controls."].join("\n"),
+  };
+}
+
 function agentInstructionsMessage(instructions) {
   const text = instructions?.trim();
   if (!text) return null;
@@ -191,12 +200,13 @@ async function generateAssistantReply(session, content, { onDelta = () => {}, ap
   const instruction = project ? projectInstructionMessage(await readProjectInstructions(project.workspacePath)) : null;
   const agentInstructions = agentInstructionsMessage(store.getSetting("agent-instructions") ?? "");
   const memory = memoryContextMessage(store.listMemories("", 12));
+  const goals = goalsContextMessage(store.listGoals());
   const notion = await notionContextMessage();
   let fullText = "";
   const controller = new AbortController();
   activeChatControllers.set(session.id, controller);
   try {
-    for await (const delta of streamCompletion(providerRuntime.get(), [agentInstructions, instruction, memory, notion, modelContext.summaryMessage, ...modelContext.activeMessages].filter(Boolean), { signal: controller.signal })) {
+    for await (const delta of streamCompletion(providerRuntime.get(), [agentInstructions, instruction, memory, goals, notion, modelContext.summaryMessage, ...modelContext.activeMessages].filter(Boolean), { signal: controller.signal })) {
       fullText += delta;
       onDelta(delta);
     }
@@ -322,6 +332,32 @@ async function handle(request, response) {
     if (instructions.length > 16_000) return json(response, 400, { error: "instructions must be at most 16,000 characters." });
     store.setSetting("agent-instructions", instructions);
     return json(response, 200, { instructions });
+  }
+  if (url.pathname === "/api/goals" && request.method === "GET") return json(response, 200, store.listGoals());
+  if (url.pathname === "/api/goals" && request.method === "POST") {
+    const body = await readJson(request);
+    const title = body.title?.trim();
+    const details = body.details?.trim() ?? "";
+    const status = body.status ?? "active";
+    if (!title || title.length > 240 || details.length > 5_000) return json(response, 400, { error: "title is required (up to 240 characters) and details must be at most 5,000 characters." });
+    if (!["active", "paused", "completed"].includes(status)) return json(response, 400, { error: "Unsupported goal status." });
+    return json(response, 201, store.createGoal({ title, details, status }));
+  }
+  const goalMatch = url.pathname.match(/^\/api\/goals\/([^/]+)$/);
+  if (goalMatch && request.method === "PATCH") {
+    const body = await readJson(request);
+    const title = body.title?.trim();
+    const details = body.details?.trim() ?? "";
+    const status = body.status;
+    if (!title || title.length > 240 || details.length > 5_000) return json(response, 400, { error: "title is required (up to 240 characters) and details must be at most 5,000 characters." });
+    if (!["active", "paused", "completed"].includes(status)) return json(response, 400, { error: "Unsupported goal status." });
+    const goal = store.updateGoal(goalMatch[1], { title, details, status });
+    if (!goal) return json(response, 404, { error: "Goal not found." });
+    return json(response, 200, goal);
+  }
+  if (goalMatch && request.method === "DELETE") {
+    if (!store.deleteGoal(goalMatch[1])) return json(response, 404, { error: "Goal not found." });
+    return json(response, 204, {});
   }
   if (url.pathname === "/api/memories" && request.method === "POST") {
     const body = await readJson(request);
