@@ -44,7 +44,19 @@ export function createProviderRuntime(environmentConfig, persistedConfig) {
   return { get: () => cloneConfig(current), configure };
 }
 
-async function* demoStream(messages) {
+function requestSignal(signal) {
+  return signal ? AbortSignal.any([signal, AbortSignal.timeout(10 * 60 * 1000)]) : AbortSignal.timeout(10 * 60 * 1000);
+}
+
+async function waitForDemoChunk(signal) {
+  if (signal?.aborted) throw new DOMException("Generation cancelled.", "AbortError");
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(resolve, 12);
+    signal?.addEventListener("abort", () => { clearTimeout(timeout); reject(new DOMException("Generation cancelled.", "AbortError")); }, { once: true });
+  });
+}
+
+async function* demoStream(messages, signal) {
   const lastUserMessage = [...messages].reverse().find((message) => message.role === "user")?.content ?? "";
   const response = [
     "현재 FLUX는 demo 모드로 실행 중입니다. ",
@@ -52,18 +64,18 @@ async function* demoStream(messages) {
     `받은 요청: ${lastUserMessage}`,
   ].join("");
   for (const part of response.match(/.{1,16}/gu) ?? []) {
-    await new Promise((resolve) => setTimeout(resolve, 12));
+    await waitForDemoChunk(signal);
     yield part;
   }
 }
 
-async function* ollamaStream(config, messages) {
+async function* ollamaStream(config, messages, signal) {
   if (!config.ollama.model) throw new Error("FLUX_OLLAMA_MODEL is required for the Ollama provider.");
   const response = await fetch(`${config.ollama.baseUrl}/api/chat`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ model: config.ollama.model, messages: asConversation(messages), stream: true }),
-    signal: AbortSignal.timeout(10 * 60 * 1000),
+    signal: requestSignal(signal),
   });
   if (!response.ok || !response.body) throw new Error(`Ollama returned ${response.status}: ${await response.text()}`);
 
@@ -85,7 +97,7 @@ async function* ollamaStream(config, messages) {
   }
 }
 
-async function* openAiCompatibleStream(config, messages) {
+async function* openAiCompatibleStream(config, messages, signal) {
   if (!config.openai.apiKey) throw new Error("FLUX_OPENAI_API_KEY is required for the OpenAI-compatible provider.");
   if (!config.openai.model) throw new Error("FLUX_OPENAI_MODEL is required for the OpenAI-compatible provider.");
   const response = await fetch(`${config.openai.baseUrl}/responses`, {
@@ -100,7 +112,7 @@ async function* openAiCompatibleStream(config, messages) {
       store: false,
       input: asConversation(messages),
     }),
-    signal: AbortSignal.timeout(10 * 60 * 1000),
+    signal: requestSignal(signal),
   });
   if (!response.ok || !response.body) throw new Error(`Model provider returned ${response.status}: ${await response.text()}`);
 
@@ -127,14 +139,14 @@ async function* openAiCompatibleStream(config, messages) {
   }
 }
 
-async function* openAiChatCompatibleStream(config, messages) {
+async function* openAiChatCompatibleStream(config, messages, signal) {
   if (!config.openai.apiKey) throw new Error("API 키를 입력하세요.");
   if (!config.openai.model) throw new Error("모델 이름을 입력하세요.");
   const response = await fetch(`${config.openai.baseUrl}/chat/completions`, {
     method: "POST",
     headers: { authorization: `Bearer ${config.openai.apiKey}`, "content-type": "application/json" },
     body: JSON.stringify({ model: config.openai.model, stream: true, messages: asConversation(messages) }),
-    signal: AbortSignal.timeout(10 * 60 * 1000),
+    signal: requestSignal(signal),
   });
   if (!response.ok || !response.body) throw new Error(`Model provider returned ${response.status}: ${await response.text()}`);
 
@@ -157,11 +169,11 @@ async function* openAiChatCompatibleStream(config, messages) {
   }
 }
 
-export function streamCompletion(config, messages) {
-  if (config.provider === "ollama") return ollamaStream(config, messages);
-  if (config.provider === "openai-compatible") return openAiCompatibleStream(config, messages);
-  if (config.provider === "openai-chat-compatible") return openAiChatCompatibleStream(config, messages);
-  return demoStream(messages);
+export function streamCompletion(config, messages, { signal } = {}) {
+  if (config.provider === "ollama") return ollamaStream(config, messages, signal);
+  if (config.provider === "openai-compatible") return openAiCompatibleStream(config, messages, signal);
+  if (config.provider === "openai-chat-compatible") return openAiChatCompatibleStream(config, messages, signal);
+  return demoStream(messages, signal);
 }
 
 export function providerStatus(config) {

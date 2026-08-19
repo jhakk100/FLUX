@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createProviderRuntime, providerStatus, publicProviderSettings } from "../src/providers.mjs";
+import { createProviderRuntime, providerStatus, publicProviderSettings, streamCompletion } from "../src/providers.mjs";
 
 const baseConfig = {
   provider: "demo",
@@ -31,4 +31,12 @@ test("an empty API key leaves an existing saved key intact until explicitly clea
   assert.equal(runtime.get().openai.apiKey, "keep-me");
   runtime.configure({ provider: "openai-compatible", clearApiKey: true });
   assert.equal(runtime.get().openai.apiKey, "");
+});
+
+test("a provider stream accepts a cancellation signal", async () => {
+  const controller = new AbortController();
+  const stream = streamCompletion(baseConfig, [{ role: "user", content: "long response" }], { signal: controller.signal });
+  await stream.next();
+  controller.abort();
+  await assert.rejects(() => stream.next(), { name: "AbortError" });
 });

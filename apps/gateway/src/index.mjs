@@ -14,6 +14,7 @@ const config = loadConfig();
 const store = openStore(config.dataDirectory);
 const providerRuntime = createProviderRuntime(config, store.getSetting("provider-config"));
 const dashboardPath = path.resolve(process.cwd(), "apps/dashboard/index.html");
+const activeChatControllers = new Map();
 
 async function loadDashboard() {
   if (isSea()) return getAsset("dashboard.html", "utf8");
@@ -341,11 +342,19 @@ async function handle(request, response) {
     if (!store.getSession(sessionMessagesMatch[1])) return json(response, 404, { error: "Session not found." });
     return json(response, 200, store.listMessages(sessionMessagesMatch[1]));
   }
+  const cancelChatMatch = url.pathname.match(/^\/api\/chat\/([^/]+)\/cancel$/);
+  if (cancelChatMatch && request.method === "POST") {
+    const controller = activeChatControllers.get(cancelChatMatch[1]);
+    if (!controller) return json(response, 404, { error: "No active generation for this session." });
+    controller.abort();
+    return json(response, 202, { cancelled: true });
+  }
   if (url.pathname === "/api/chat" && request.method === "POST") {
     const body = await readJson(request);
     const session = store.getSession(body.sessionId);
     if (!session || !body.content?.trim()) return json(response, 400, { error: "A valid sessionId and content are required." });
     if (session.archivedAt) return json(response, 409, { error: "Archived sessions must be restored before sending a message." });
+    if (activeChatControllers.has(session.id)) return json(response, 409, { error: "This session already has an active generation." });
     store.addMessage({ sessionId: session.id, role: "user", content: body.content.trim() });
     const messages = store.listMessages(session.id);
     const project = session.projectId ? requireProject(session.projectId) : null;
@@ -353,15 +362,24 @@ async function handle(request, response) {
     const memory = memoryContextMessage(store.listMemories("", 12));
     response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", connection: "keep-alive" });
     let fullText = "";
+    const controller = new AbortController();
+    activeChatControllers.set(session.id, controller);
     try {
-      for await (const delta of streamCompletion(providerRuntime.get(), [instruction, memory, ...messages].filter(Boolean))) {
+      for await (const delta of streamCompletion(providerRuntime.get(), [instruction, memory, ...messages].filter(Boolean), { signal: controller.signal })) {
         fullText += delta;
         sse(response, "delta", { text: delta });
       }
       const assistantMessage = store.addMessage({ sessionId: session.id, role: "assistant", content: fullText });
       sse(response, "done", { message: assistantMessage });
     } catch (error) {
-      sse(response, "error", { error: redactSecret(error.message) });
+      if (controller.signal.aborted) {
+        const assistantMessage = fullText ? store.addMessage({ sessionId: session.id, role: "assistant", content: fullText }) : null;
+        sse(response, "done", { message: assistantMessage, cancelled: true });
+      } else {
+        sse(response, "error", { error: redactSecret(error.message) });
+      }
+    } finally {
+      activeChatControllers.delete(session.id);
     }
     return response.end();
   }
