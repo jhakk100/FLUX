@@ -179,11 +179,11 @@ async function notionContextMessage() {
   };
 }
 
-async function generateAssistantReply(session, content, { onDelta = () => {} } = {}) {
+async function generateAssistantReply(session, content, { onDelta = () => {}, appendUser = true, excludeMessageId = null } = {}) {
   if (session.archivedAt) throw requestError("Archived sessions must be restored before sending a message.", 409);
   if (activeChatControllers.has(session.id)) throw requestError("This session already has an active generation.", 409);
-  store.addMessage({ sessionId: session.id, role: "user", content: content.trim() });
-  const messages = store.listMessages(session.id);
+  if (appendUser) store.addMessage({ sessionId: session.id, role: "user", content: content.trim() });
+  const messages = store.listMessages(session.id).filter((message) => message.id !== excludeMessageId);
   const currentContext = store.getSessionContext(session.id);
   const modelContext = buildModelContext(messages, currentContext, config.contextTokenBudget, config.contextCompactThreshold);
   if (modelContext.context.changed) store.saveSessionContext(session.id, modelContext.context);
@@ -456,6 +456,23 @@ async function handle(request, response) {
     response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", connection: "keep-alive" });
     try {
       const result = await generateAssistantReply(session, body.content, { onDelta: (delta) => sse(response, "delta", { text: delta }) });
+      sse(response, "done", result);
+    } catch (error) {
+      sse(response, "error", { error: redactSecret(error.message) });
+    }
+    return response.end();
+  }
+  const regenerateMatch = url.pathname.match(/^\/api\/chat\/([^/]+)\/regenerate$/);
+  if (regenerateMatch && request.method === "POST") {
+    const session = store.getSession(regenerateMatch[1]);
+    if (!session) return json(response, 404, { error: "Session not found." });
+    const messages = store.listMessages(session.id);
+    const previousAssistant = messages.at(-1);
+    if (!previousAssistant || previousAssistant.role !== "assistant") return json(response, 409, { error: "Only a session ending with an assistant answer can be regenerated." });
+    response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", connection: "keep-alive" });
+    try {
+      const result = await generateAssistantReply(session, "", { appendUser: false, excludeMessageId: previousAssistant.id, onDelta: (delta) => sse(response, "delta", { text: delta }) });
+      if (!result.cancelled) store.deleteMessage(previousAssistant.id);
       sse(response, "done", result);
     } catch (error) {
       sse(response, "error", { error: redactSecret(error.message) });

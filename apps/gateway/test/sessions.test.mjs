@@ -36,3 +36,15 @@ test("each Discord channel and user pair keeps an isolated reusable session", as
   assert.notEqual(anotherChannel.id, first.id);
   store.close();
 });
+
+test("a stored assistant response can be removed after a successful regeneration", async (context) => {
+  const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "flux-regenerate-"));
+  context.after(() => fs.rm(dataDirectory, { recursive: true, force: true }));
+  const store = openStore(dataDirectory);
+  const session = store.createSession({ title: "재생성" });
+  store.addMessage({ sessionId: session.id, role: "user", content: "질문" });
+  const answer = store.addMessage({ sessionId: session.id, role: "assistant", content: "이전 답변" });
+  assert.equal(store.deleteMessage(answer.id).content, "이전 답변");
+  assert.deepEqual(store.listMessages(session.id).map((message) => message.content), ["질문"]);
+  store.close();
+});

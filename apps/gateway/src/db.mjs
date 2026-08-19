@@ -167,6 +167,15 @@ export function openStore(dataDirectory) {
     return database.prepare("SELECT id, session_id AS sessionId, role, content, created_at AS createdAt FROM messages WHERE session_id = ? ORDER BY created_at ASC").all(sessionId);
   }
 
+  function deleteMessage(messageId) {
+    const message = database.prepare("SELECT id, session_id AS sessionId, role, content, created_at AS createdAt FROM messages WHERE id = ?").get(messageId);
+    if (!message) return null;
+    database.prepare("DELETE FROM messages WHERE id = ?").run(messageId);
+    database.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(now(), message.sessionId);
+    audit("message.deleted", "message", messageId, { sessionId: message.sessionId, role: message.role, reason: "regenerated" });
+    return message;
+  }
+
   function getOrCreateDiscordSession({ channelId, userId, title }) {
     const linked = database.prepare("SELECT session_id AS sessionId FROM discord_sessions WHERE channel_id = ? AND user_id = ?").get(channelId, userId);
     if (linked) {
@@ -271,5 +280,5 @@ export function openStore(dataDirectory) {
     audit("setting.updated", "setting", key, { key });
   }
 
-  return { close: () => database.close(), createProject, listProjects, getProject, createSession, listSessions, getSession, renameSession, archiveSession, searchSessions, addMessage, listMessages, getOrCreateDiscordSession, getSessionContext, saveSessionContext, listMemories, createMemory, updateMemory, deleteMemory, createApproval, listApprovals, getApproval, decideApproval, listAuditEvents, getSetting, setSetting };
+  return { close: () => database.close(), createProject, listProjects, getProject, createSession, listSessions, getSession, renameSession, archiveSession, searchSessions, addMessage, listMessages, deleteMessage, getOrCreateDiscordSession, getSessionContext, saveSessionContext, listMemories, createMemory, updateMemory, deleteMemory, createApproval, listApprovals, getApproval, decideApproval, listAuditEvents, getSetting, setSetting };
 }
