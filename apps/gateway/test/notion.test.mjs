@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { notionStatus, readNotionPage, searchNotion, testNotionConnection } from "../src/notion.mjs";
+import { notionBlocksToText, notionStatus, readNotionPage, searchNotion, testNotionConnection } from "../src/notion.mjs";
 
 const notion = { apiKey: "secret", apiVersion: "2026-03-11" };
 
@@ -14,8 +14,18 @@ function fakeFetch(responses, requests) {
 
 test("Notion status does not expose the integration token", () => {
   const status = notionStatus(notion);
-  assert.deepEqual(status, { configured: true, apiVersion: "2026-03-11", mode: "read-only" });
+  assert.deepEqual(status, { configured: true, apiVersion: "2026-03-11", mode: "read-only", contextPageCount: 0 });
   assert.equal(JSON.stringify(status).includes("secret"), false);
+});
+
+test("Notion blocks become bounded plain reference text", () => {
+  const text = notionBlocksToText([
+    { type: "heading_1", heading_1: { rich_text: [{ plain_text: "수업 메모" }] } },
+    { type: "to_do", to_do: { checked: false, rich_text: [{ plain_text: "과제 제출" }] } },
+    { type: "code", code: { rich_text: [{ plain_text: "const flux = true;" }] } },
+  ]);
+  assert.equal(text, "# 수업 메모\n- [ ] 과제 제출\n```\nconst flux = true;\n```");
+  assert.equal(notionBlocksToText([{ type: "paragraph", paragraph: { rich_text: [{ plain_text: "0123456789" }] } }], 5), "… (Notion reference truncated)");
 });
 
 test("Notion calls use a versioned bearer request and support search", async () => {

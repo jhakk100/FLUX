@@ -5,10 +5,33 @@ function configured(notion) {
 }
 
 export function notionStatus(notion) {
-  return { configured: configured(notion), apiVersion: notion.apiVersion || null, mode: "read-only" };
+  return { configured: configured(notion), apiVersion: notion.apiVersion || null, mode: "read-only", contextPageCount: notion.contextPageIds?.length ?? 0 };
 }
 
-async function notionRequest(notion, resource, { method = "GET", body, fetchImpl = fetch } = {}) {
+export function notionBlocksToText(blocks, limit = 24_000) {
+  const lines = [];
+  let length = 0;
+  for (const block of blocks) {
+    const content = block[block.type] ?? {};
+    const text = (content.rich_text ?? content.text ?? []).map((part) => part.plain_text ?? part.text?.content ?? "").join("").trim()
+      || content.caption?.map((part) => part.plain_text ?? "").join("").trim()
+      || content.title?.trim()
+      || "";
+    if (!text) continue;
+    const prefix = { bulleted_list_item: "- ", numbered_list_item: "1. ", to_do: content.checked ? "- [x] " : "- [ ] ", quote: "> ", code: "```\n", heading_1: "# ", heading_2: "## ", heading_3: "### " }[block.type] ?? "";
+    const suffix = block.type === "code" ? "\n```" : "";
+    const line = `${prefix}${text}${suffix}`;
+    if (length + line.length + 1 > limit) {
+      lines.push("… (Notion reference truncated)");
+      break;
+    }
+    lines.push(line);
+    length += line.length + 1;
+  }
+  return lines.join("\n");
+}
+
+async function notionRequest(notion, resource, { method = "GET", body, fetchImpl = fetch, signal = AbortSignal.timeout(10_000) } = {}) {
   if (!configured(notion)) {
     const error = new Error("Notion is not configured. Set FLUX_NOTION_API_KEY in .env and restart FLUX.");
     error.statusCode = 409;
@@ -22,6 +45,7 @@ async function notionRequest(notion, resource, { method = "GET", body, fetchImpl
       "content-type": "application/json",
     },
     body: body ? JSON.stringify(body) : undefined,
+    signal,
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {

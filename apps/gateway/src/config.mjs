@@ -55,6 +55,7 @@ export function loadConfig(env = process.env) {
     notion: {
       apiKey: setting("NOTION_API_KEY", "").trim(),
       apiVersion: setting("NOTION_API_VERSION", "2026-03-11").trim(),
+      contextPageIds: setting("NOTION_CONTEXT_PAGE_IDS", "").split(",").map((value) => value.trim()).filter(Boolean),
     },
   };
 }
