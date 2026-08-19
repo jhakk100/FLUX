@@ -32,3 +32,7 @@ test("LM Studio has a local OpenAI-compatible default address", () => {
   assert.equal(config.lmstudio.baseUrl, "http://127.0.0.1:1234/v1");
   assert.equal(config.lmstudio.model, "local-model");
 });
+
+test("a user-selected data directory overrides the persistent platform default", () => {
+  assert.equal(loadConfig({ FLUX_DATA_DIR: "D:/flux-data" }).dataDirectory, "D:/flux-data");
+});

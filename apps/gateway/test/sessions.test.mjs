@@ -33,6 +33,19 @@ test("each FLUX project owns its instructions independently", async (context) =>
   store.close();
 });
 
+test("legacy executable data migrates into the persistent data directory once", async (context) => {
+  const legacyDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "flux-legacy-data-"));
+  const persistentDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "flux-persistent-data-"));
+  context.after(() => fs.rm(legacyDirectory, { recursive: true, force: true }));
+  context.after(() => fs.rm(persistentDirectory, { recursive: true, force: true }));
+  const legacyStore = openStore(legacyDirectory);
+  legacyStore.createSession({ title: "기존 대화" });
+  legacyStore.close();
+  const persistentStore = openStore(persistentDirectory, { legacyDataDirectory: legacyDirectory });
+  assert.equal(persistentStore.listSessions()[0].title, "기존 대화");
+  persistentStore.close();
+});
+
 test("each Discord channel and user pair keeps an isolated reusable session", async (context) => {
   const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "flux-discord-sessions-"));
   context.after(() => fs.rm(dataDirectory, { recursive: true, force: true }));

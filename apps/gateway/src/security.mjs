@@ -38,6 +38,38 @@ export function resolveInsideWorkspace(workspacePath, requestedPath = ".") {
   return target;
 }
 
+function pathApi(platform) {
+  return platform === "win32" ? path.win32 : path.posix;
+}
+
+function isInside(root, candidate, platform) {
+  const api = pathApi(platform);
+  const normalizedRoot = api.resolve(root);
+  const normalizedCandidate = api.resolve(candidate);
+  const compare = platform === "win32" ? (value) => value.toLowerCase() : (value) => value;
+  const relative = api.relative(compare(normalizedRoot), compare(normalizedCandidate));
+  return relative === "" || (!relative.startsWith("..") && !api.isAbsolute(relative));
+}
+
+export function isProtectedSystemPath(candidate, { platform = process.platform, env = process.env } = {}) {
+  const api = pathApi(platform);
+  const target = api.resolve(candidate);
+  if (platform === "win32") {
+    const systemRoot = env.SystemRoot || env.windir || "C:\\Windows";
+    const systemDrive = env.SystemDrive || api.parse(systemRoot).root;
+    if (target.toLowerCase() === api.resolve(systemDrive).toLowerCase()) return true;
+    const protectedRoots = [systemRoot, env.ProgramFiles, env["ProgramFiles(x86)"], env.ProgramData].filter(Boolean);
+    return protectedRoots.some((root) => isInside(root, target, platform));
+  }
+  const protectedRoots = ["/bin", "/boot", "/dev", "/etc", "/lib", "/lib64", "/proc", "/root", "/run", "/sbin", "/sys", "/usr", "/var"];
+  return protectedRoots.some((root) => isInside(root, target, platform)) || target === "/";
+}
+
+export function assertSafeWorkspacePath(candidate, options) {
+  if (isProtectedSystemPath(candidate, options)) throw new Error("FLUX blocks projects and file changes inside protected operating-system paths.");
+  return candidate;
+}
+
 export function redactSecret(value) {
   if (typeof value !== "string") return value;
   return value.replace(/(sk-[A-Za-z0-9_-]{8,}|Bearer\s+)[A-Za-z0-9._-]+/gi, "$1[REDACTED]");

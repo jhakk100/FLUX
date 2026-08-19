@@ -6,7 +6,7 @@ Windows와 Linux에서 실행되는 로컬 우선 개인 AI 오케스트레이�
 
 ## 버전
 
-베타 기간에는 Semantic Versioning의 `0.1.x`를 사용합니다. 현재 버전은 `0.1.36`이며, `x`는 Git 커밋 순번입니다. 큰 기능 묶음이 안정화되면 `0.2.0`처럼 올립니다. 실행 중인 앱의 버전·연결 상태는 대시보드의 **설정**에서 확인할 수 있습니다.
+베타 기간에는 Semantic Versioning의 `0.1.x`를 사용합니다. 현재 버전은 `0.1.37`이며, `x`는 Git 커밋 순번입니다. 큰 기능 묶음이 안정화되면 `0.2.0`처럼 올립니다. 실행 중인 앱의 버전·연결 상태는 대시보드의 **설정**에서 확인할 수 있습니다.
 
 개발용 Node.js·pnpm 설치와 설치 파일 보관 절차는 [개발 환경 설치 안내](./setup/README.md)에 있습니다.
 
@@ -23,7 +23,9 @@ node --env-file=.env apps/gateway/src/index.mjs
 
 ## Windows 실행 파일
 
-Windows에서는 [dist/Flux.exe](./dist/Flux.exe)를 더블클릭해 실행할 수 있습니다. 실행 파일은 Node.js를 따로 설치하지 않아도 되며, 로컬 Gateway를 시작한 뒤 브라우저를 엽니다. 같은 폴더의 `.env.example`을 `.env`로 복사하면 Ollama 또는 OpenAI 호환 API 설정을 추가할 수 있습니다.
+Windows에서는 [dist/Flux.exe](./dist/Flux.exe)를 더블클릭해 실행할 수 있습니다. 실행 파일은 Node.js를 따로 설치하지 않아도 되며, 로컬 Gateway를 시작한 뒤 브라우저를 엽니다. 같은 폴더의 `.env.example`을 `.env`로 복사하면 Ollama 또는 OpenAI 호환 API 설정을 추가할 수 있습니다. 대화·설정 데이터는 Windows의 `%LOCALAPPDATA%\\FLUX\\data`, Linux의 `~/.local/state/flux/data`에 저장되어 실행 파일 재빌드와 분리됩니다.
+
+이전 실행 파일이 `dist/data`에 저장한 `flux.sqlite`는 새 영구 저장 위치가 비어 있을 때 첫 실행 시 복사합니다. 이후 실행 파일을 다시 빌드해도 새 저장 위치의 데이터는 삭제되지 않습니다.
 
 개발자가 실행 파일을 다시 만들려면 의존성을 설치한 뒤 아래 명령을 실행합니다.
 
@@ -56,9 +58,9 @@ FLUX는 기본적으로 추정 24,000 토큰의 75%에서 오래된 대화를 �
 - API 키 저장 뒤 목록 팝업에서 모델을 선택하는 demo / Ollama / LM Studio / Google AI(Gemini) / OpenAI 호환 Responses API 어댑터
 - 선택한 사용자·채널만 받는 Discord 봇 연동(봇/웹훅 루프 차단, 채널×사용자별 세션)
 - Notion Integration의 읽기 전용 검색·페이지/블록 조회
-- 프로젝트 폴더 탐색·이름 검색·텍스트 파일 읽기와 변경 전후 diff 승인 요청
+- 프로젝트 폴더 구조와 대표 설정 파일을 모델 문맥에 읽기 전용으로 전달, 파일 탐색·이름 검색·텍스트 파일 읽기와 변경 전후 diff 승인 요청
 - FLUX 프로젝트별 독립 지침을 대화에 자동 반영
-- 삭제·덮어쓰기·외부 효과를 자동 실행하지 않는 승인 정책
+- 삭제·덮어쓰기·외부 효과를 자동 실행하지 않는 승인 정책 및 Windows/Linux 시스템 경로 프로젝트·변경 차단
 
 자세한 방향은 [설계 문서](./02-product-and-architecture.md)를 참고하세요.
 

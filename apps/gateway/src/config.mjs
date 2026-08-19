@@ -1,6 +1,13 @@
 import process from "node:process";
+import os from "node:os";
+import path from "node:path";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
+
+function defaultDataDirectory(env) {
+  if (process.platform === "win32") return path.join(env.LOCALAPPDATA || path.join(env.USERPROFILE || os.homedir(), "AppData", "Local"), "FLUX", "data");
+  return path.join(env.XDG_STATE_HOME || path.join(env.HOME || os.homedir(), ".local", "state"), "flux", "data");
+}
 
 export function loadConfig(env = process.env) {
   // HARU_* is retained as a temporary migration fallback for existing local .env files.
@@ -27,7 +34,9 @@ export function loadConfig(env = process.env) {
     host,
     port,
     gatewayToken,
-    dataDirectory: setting("DATA_DIR", "./data"),
+    // Runtime state must survive replacing or rebuilding the executable.
+    dataDirectory: setting("DATA_DIR", defaultDataDirectory(env)),
+    legacyDataDirectory: path.resolve(process.cwd(), "data"),
     contextTokenBudget,
     contextCompactThreshold,
     provider: setting("PROVIDER", "demo"),

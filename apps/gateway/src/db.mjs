@@ -3,7 +3,20 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 
-export function openStore(dataDirectory) {
+function migrateLegacyStore(dataDirectory, legacyDataDirectory) {
+  if (!legacyDataDirectory || path.resolve(dataDirectory) === path.resolve(legacyDataDirectory)) return;
+  const destination = path.join(dataDirectory, "flux.sqlite");
+  const source = path.join(legacyDataDirectory, "flux.sqlite");
+  if (fs.existsSync(destination) || !fs.existsSync(source)) return;
+  fs.mkdirSync(dataDirectory, { recursive: true });
+  for (const suffix of ["", "-wal", "-shm"]) {
+    const legacyFile = `${source}${suffix}`;
+    if (fs.existsSync(legacyFile)) fs.copyFileSync(legacyFile, `${destination}${suffix}`);
+  }
+}
+
+export function openStore(dataDirectory, { legacyDataDirectory } = {}) {
+  migrateLegacyStore(dataDirectory, legacyDataDirectory);
   fs.mkdirSync(dataDirectory, { recursive: true });
   const database = new DatabaseSync(path.join(dataDirectory, "flux.sqlite"));
   database.exec("PRAGMA journal_mode = WAL;");
