@@ -2,7 +2,7 @@ function asConversation(messages) {
   return messages.map((message) => ({ role: message.role === "assistant" ? "assistant" : message.role === "system" ? "system" : "user", content: message.content }));
 }
 
-const PROVIDERS = new Set(["demo", "ollama", "lm-studio", "openai-compatible", "openai-chat-compatible", "factchat", "factchat-responses"]);
+const PROVIDERS = new Set(["demo", "ollama", "lm-studio", "openai-compatible", "openai-chat-compatible", "factchat", "factchat-responses", "google-ai"]);
 
 function normalizeBaseUrl(value) {
   return String(value ?? "").trim().replace(/\/$/, "");
@@ -22,6 +22,7 @@ function cloneConfig(config) {
     lmstudio: { ...config.lmstudio },
     openai: { ...config.openai },
     factchat: { ...config.factchat },
+    googleAi: { baseUrl: "https://generativelanguage.googleapis.com/v1beta", model: "", apiKey: "", ...config.googleAi },
   };
 }
 
@@ -34,6 +35,7 @@ export function createProviderRuntime(environmentConfig, persistedConfig) {
       lmstudio: { ...current.lmstudio, ...persistedConfig.lmstudio },
       openai: { ...current.openai, ...persistedConfig.openai },
       factchat: { ...current.factchat, ...persistedConfig.factchat },
+      googleAi: { ...current.googleAi, ...persistedConfig.googleAi },
     };
   }
 
@@ -51,12 +53,16 @@ export function createProviderRuntime(environmentConfig, persistedConfig) {
     next.openai.model = String(input.openaiModel ?? next.openai.model).trim();
     next.factchat.baseUrl = normalizeBaseUrl(input.factchatBaseUrl ?? next.factchat.baseUrl);
     next.factchat.model = String(input.factchatModel ?? next.factchat.model).trim();
+    next.googleAi.baseUrl = normalizeBaseUrl(input.googleAiBaseUrl ?? next.googleAi.baseUrl);
+    next.googleAi.model = String(input.googleAiModel ?? next.googleAi.model).trim().replace(/^models\//, "");
     if (input.clearApiKey === true) next.openai.apiKey = "";
     else if (typeof input.apiKey === "string" && input.apiKey.trim()) next.openai.apiKey = input.apiKey.trim();
     if (input.clearFactchatApiKey === true) next.factchat.apiKey = "";
     else if (typeof input.factchatApiKey === "string" && input.factchatApiKey.trim()) next.factchat.apiKey = input.factchatApiKey.trim();
     if (input.clearLmStudioApiKey === true) next.lmstudio.apiKey = "";
     else if (typeof input.lmStudioApiKey === "string" && input.lmStudioApiKey.trim()) next.lmstudio.apiKey = input.lmStudioApiKey.trim();
+    if (input.clearGoogleAiApiKey === true) next.googleAi.apiKey = "";
+    else if (typeof input.googleAiApiKey === "string" && input.googleAiApiKey.trim()) next.googleAi.apiKey = input.googleAiApiKey.trim();
     current = next;
     return cloneConfig(current);
   }
@@ -213,6 +219,25 @@ async function* factchatResponsesStream(config, messages, signal) {
   while (true) { const { done, value } = await reader.read(); buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done }); const events = buffer.split("\n\n"); buffer = events.pop() ?? ""; for (const rawEvent of events) { const lines = rawEvent.split("\n"); const name = lines.find((line) => line.startsWith("event:"))?.slice(6).trim(); const data = lines.filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n"); if (!data || data === "[DONE]") continue; const event = JSON.parse(data); if (name === "response.output_text.delta" && event.delta) yield event.delta; if (name === "error" || event.error) throw new Error(event.error?.message ?? "FactChat Responses returned an error."); } if (done) break; }
 }
 
+function geminiPayload(messages) {
+  const systemInstruction = messages.filter((message) => message.role === "system").map((message) => message.content).join("\n\n");
+  const contents = messages.filter((message) => message.role !== "system").map((message) => ({ role: message.role === "assistant" ? "model" : "user", parts: [{ text: message.content }] }));
+  return { ...(systemInstruction ? { system_instruction: { parts: [{ text: systemInstruction }] } } : {}), contents };
+}
+
+async function* googleAiStream(config, messages, signal) {
+  if (!config.googleAi.apiKey || !config.googleAi.model) throw new Error("Google AI API 키와 Gemini 모델 이름을 입력하세요.");
+  const response = await fetch(`${config.googleAi.baseUrl}/models/${encodeURIComponent(config.googleAi.model)}:streamGenerateContent?alt=sse`, {
+    method: "POST",
+    headers: { "x-goog-api-key": config.googleAi.apiKey, "content-type": "application/json" },
+    body: JSON.stringify(geminiPayload(messages)),
+    signal: requestSignal(signal),
+  });
+  if (!response.ok || !response.body) throw new Error(`Google AI returned ${response.status}: ${await response.text()}`);
+  const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
+  while (true) { const { done, value } = await reader.read(); buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done }); const events = buffer.split("\n\n"); buffer = events.pop() ?? ""; for (const rawEvent of events) { const data = rawEvent.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n"); if (!data || data === "[DONE]") continue; const event = JSON.parse(data); if (event.error) throw new Error(event.error.message ?? "Google AI returned an error."); for (const part of event.candidates?.[0]?.content?.parts ?? []) if (part.text) yield part.text; } if (done) break; }
+}
+
 export function streamCompletion(config, messages, { signal } = {}) {
   if (config.provider === "ollama") return ollamaStream(config, messages, signal);
   if (config.provider === "lm-studio") return lmStudioStream(config, messages, signal);
@@ -220,6 +245,7 @@ export function streamCompletion(config, messages, { signal } = {}) {
   if (config.provider === "openai-chat-compatible") return openAiChatCompatibleStream(config, messages, signal);
   if (config.provider === "factchat") return factchatStream(config, messages, signal);
   if (config.provider === "factchat-responses") return factchatResponsesStream(config, messages, signal);
+  if (config.provider === "google-ai") return googleAiStream(config, messages, signal);
   return demoStream(messages, signal);
 }
 
@@ -229,6 +255,7 @@ export function providerStatus(config) {
   if (["openai-compatible", "openai-chat-compatible"].includes(config.provider)) return { provider: config.provider, configured: Boolean(config.openai.apiKey && config.openai.model), model: config.openai.model || null, baseUrl: config.openai.baseUrl, apiKeyConfigured: Boolean(config.openai.apiKey) };
   if (config.provider === "factchat") return { provider: "factchat", configured: Boolean(config.factchat.apiKey && config.factchat.model), model: config.factchat.model || null, baseUrl: config.factchat.baseUrl, apiKeyConfigured: Boolean(config.factchat.apiKey) };
   if (config.provider === "factchat-responses") return { provider: "factchat-responses", configured: Boolean(config.factchat.apiKey && config.factchat.model), model: config.factchat.model || null, baseUrl: config.factchat.baseUrl, apiKeyConfigured: Boolean(config.factchat.apiKey) };
+  if (config.provider === "google-ai") return { provider: "google-ai", configured: Boolean(config.googleAi.apiKey && config.googleAi.model), model: config.googleAi.model || null, baseUrl: config.googleAi.baseUrl, apiKeyConfigured: Boolean(config.googleAi.apiKey) };
   return { provider: "demo", configured: true, model: null };
 }
 
@@ -247,6 +274,9 @@ export function publicProviderSettings(config) {
     factchatBaseUrl: config.factchat.baseUrl,
     factchatModel: config.factchat.model,
     factchatApiKeyConfigured: Boolean(config.factchat.apiKey),
+    googleAiBaseUrl: config.googleAi.baseUrl,
+    googleAiModel: config.googleAi.model,
+    googleAiApiKeyConfigured: Boolean(config.googleAi.apiKey),
   };
 }
 
@@ -270,6 +300,12 @@ export async function testProviderConnection(config) {
     const response = await fetch(`${config.factchat.baseUrl}/models/`, { headers: { authorization: `Bearer ${config.factchat.apiKey}` }, signal: AbortSignal.timeout(10_000) });
     if (!response.ok) throw new Error(`FactChat API가 ${response.status} 응답을 반환했습니다. 키와 접근 권한을 확인하세요.`);
     return { ok: true, message: "FactChat API 인증과 모델 목록 연결에 성공했습니다." };
+  }
+  if (config.provider === "google-ai") {
+    if (!config.googleAi.apiKey || !config.googleAi.model) throw new Error("Google AI API 키와 Gemini 모델 이름을 입력한 뒤 저장하세요.");
+    const response = await fetch(`${config.googleAi.baseUrl}/models/${encodeURIComponent(config.googleAi.model)}`, { headers: { "x-goog-api-key": config.googleAi.apiKey }, signal: AbortSignal.timeout(10_000) });
+    if (!response.ok) throw new Error(`Google AI가 ${response.status} 응답을 반환했습니다. API 키와 모델 접근 권한을 확인하세요.`);
+    return { ok: true, message: "Google AI 인증과 Gemini 모델 확인에 성공했습니다." };
   }
   if (!config.openai.apiKey || !config.openai.model) throw new Error("API 키와 모델 이름을 입력한 뒤 저장하세요.");
   const response = await fetch(`${config.openai.baseUrl}/models`, {

@@ -21,6 +21,18 @@ test("sessions can be renamed, searched, archived, and restored", async (context
   store.close();
 });
 
+test("each FLUX project owns its instructions independently", async (context) => {
+  const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "flux-project-instructions-"));
+  context.after(() => fs.rm(dataDirectory, { recursive: true, force: true }));
+  const store = openStore(dataDirectory);
+  const first = store.createProject({ name: "first", workspacePath: "C:/work/first", instructions: "Use TypeScript." });
+  const second = store.createProject({ name: "second", workspacePath: "C:/work/second", instructions: "Use Python." });
+  store.updateProjectInstructions(first.id, "Use Rust.");
+  assert.equal(store.getProject(first.id).instructions, "Use Rust.");
+  assert.equal(store.getProject(second.id).instructions, "Use Python.");
+  store.close();
+});
+
 test("each Discord channel and user pair keeps an isolated reusable session", async (context) => {
   const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "flux-discord-sessions-"));
   context.after(() => fs.rm(dataDirectory, { recursive: true, force: true }));

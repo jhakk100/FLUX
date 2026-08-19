@@ -51,6 +51,11 @@ export function loadConfig(env = process.env) {
       baseUrl: setting("FACTCHAT_BASE_URL", "https://factchat-cloud.mindlogic.ai/v1/gateway").replace(/\/$/, ""),
       model: setting("FACTCHAT_MODEL", ""),
     },
+    googleAi: {
+      apiKey: setting("GOOGLE_AI_API_KEY", ""),
+      baseUrl: setting("GOOGLE_AI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta").replace(/\/$/, ""),
+      model: setting("GOOGLE_AI_MODEL", ""),
+    },
     discord: {
       token: setting("DISCORD_BOT_TOKEN", "").trim(),
       // A bot never becomes public merely because its token was set.

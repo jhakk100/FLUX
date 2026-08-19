@@ -13,6 +13,7 @@ export function openStore(dataDirectory) {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       workspace_path TEXT NOT NULL,
+      instructions TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS sessions (
@@ -88,6 +89,10 @@ export function openStore(dataDirectory) {
   if (!sessionColumns.some((column) => column.name === "archived_at")) {
     database.exec("ALTER TABLE sessions ADD COLUMN archived_at TEXT");
   }
+  const projectColumns = database.prepare("PRAGMA table_info(projects)").all();
+  if (!projectColumns.some((column) => column.name === "instructions")) {
+    database.exec("ALTER TABLE projects ADD COLUMN instructions TEXT NOT NULL DEFAULT ''");
+  }
 
   const now = () => new Date().toISOString();
   const id = () => randomUUID();
@@ -96,20 +101,28 @@ export function openStore(dataDirectory) {
       .run(id(), eventType, resourceType, resourceId, JSON.stringify(details), now());
   };
 
-  function createProject({ name, workspacePath }) {
-    const project = { id: id(), name, workspacePath, createdAt: now() };
-    database.prepare("INSERT INTO projects VALUES (?, ?, ?, ?)")
-      .run(project.id, project.name, project.workspacePath, project.createdAt);
+  function createProject({ name, workspacePath, instructions = "" }) {
+    const project = { id: id(), name, workspacePath, instructions, createdAt: now() };
+    database.prepare("INSERT INTO projects (id, name, workspace_path, instructions, created_at) VALUES (?, ?, ?, ?, ?)")
+      .run(project.id, project.name, project.workspacePath, project.instructions, project.createdAt);
     audit("project.created", "project", project.id, { name, workspacePath });
     return project;
   }
 
   function listProjects() {
-    return database.prepare("SELECT id, name, workspace_path AS workspacePath, created_at AS createdAt FROM projects ORDER BY created_at ASC").all();
+    return database.prepare("SELECT id, name, workspace_path AS workspacePath, instructions, created_at AS createdAt FROM projects ORDER BY created_at ASC").all();
   }
 
   function getProject(projectId) {
-    return database.prepare("SELECT id, name, workspace_path AS workspacePath, created_at AS createdAt FROM projects WHERE id = ?").get(projectId);
+    return database.prepare("SELECT id, name, workspace_path AS workspacePath, instructions, created_at AS createdAt FROM projects WHERE id = ?").get(projectId);
+  }
+
+  function updateProjectInstructions(projectId, instructions) {
+    const project = getProject(projectId);
+    if (!project) return null;
+    database.prepare("UPDATE projects SET instructions = ? WHERE id = ?").run(instructions, projectId);
+    audit("project.instructions_updated", "project", projectId, { length: instructions.length });
+    return getProject(projectId);
   }
 
   function createSession({ projectId = null, title = "새 대화", source = "web" }) {
@@ -316,5 +329,5 @@ export function openStore(dataDirectory) {
     audit("setting.updated", "setting", key, { key });
   }
 
-  return { close: () => database.close(), createProject, listProjects, getProject, createSession, listSessions, getSession, renameSession, archiveSession, searchSessions, addMessage, listMessages, deleteMessage, getOrCreateDiscordSession, getSessionContext, saveSessionContext, listMemories, createMemory, updateMemory, deleteMemory, listGoals, createGoal, updateGoal, deleteGoal, createApproval, listApprovals, getApproval, decideApproval, listAuditEvents, getSetting, setSetting };
+  return { close: () => database.close(), createProject, listProjects, getProject, updateProjectInstructions, createSession, listSessions, getSession, renameSession, archiveSession, searchSessions, addMessage, listMessages, deleteMessage, getOrCreateDiscordSession, getSessionContext, saveSessionContext, listMemories, createMemory, updateMemory, deleteMemory, listGoals, createGoal, updateGoal, deleteGoal, createApproval, listApprovals, getApproval, decideApproval, listAuditEvents, getSetting, setSetting };
 }

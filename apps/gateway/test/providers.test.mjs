@@ -49,6 +49,16 @@ test("LM Studio can be configured without a local API key", () => {
   assert.equal(publicProviderSettings(runtime.get()).lmStudioApiKeyConfigured, false);
 });
 
+test("Google AI settings keep the Gemini key local and expose only its presence", () => {
+  const runtime = createProviderRuntime(baseConfig);
+  runtime.configure({ provider: "google-ai", googleAiModel: "gemini-2.5-flash", googleAiApiKey: "gemini-secret" });
+  const config = runtime.get();
+  assert.equal(providerStatus(config).configured, true);
+  assert.equal(config.googleAi.apiKey, "gemini-secret");
+  assert.equal(publicProviderSettings(config).googleAiApiKeyConfigured, true);
+  assert.equal(JSON.stringify(publicProviderSettings(config)).includes("gemini-secret"), false);
+});
+
 test("a provider stream accepts a cancellation signal", async () => {
   const controller = new AbortController();
   const stream = streamCompletion(baseConfig, [{ role: "user", content: "long response" }], { signal: controller.signal });

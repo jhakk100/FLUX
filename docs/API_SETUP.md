@@ -37,7 +37,19 @@ FLUX에서 `사설 API (대학교)`의 기준 구현은 이 Gateway입니다. �
 
 FLUX의 `GET /api/provider-account`는 선택된 학교 API 키로 Gateway의 `/models/`와 `/credits/`를 함께 조회합니다. 결과에는 조직에 허용된 모델 ID와 월별 할당·사용·잔여 크레딧·다음 갱신일이 포함됩니다.
 
-## 3. Ollama — 로컬 모델
+## 3. Google AI — Gemini
+
+설정 화면에서 **Google AI · Gemini**를 고르고 Google AI Studio에서 발급한 API 키를 입력합니다.
+
+| 항목 | 값 |
+| --- | --- |
+| 서버 주소 | `https://generativelanguage.googleapis.com/v1beta` |
+| 모델 예시 | `gemini-2.5-flash` |
+| API 키 | Google AI Studio에서 만든 Gemini API 키 |
+
+FLUX는 Gemini의 `streamGenerateContent` API를 사용해 응답을 실시간으로 표시합니다. 연결 시험은 선택한 Gemini 모델을 직접 조회합니다. API 키는 `x-goog-api-key` 요청 헤더로만 전송됩니다. [Gemini API 공식 참고 문서](https://ai.google.dev/api), [스트리밍 생성 문서](https://ai.google.dev/gemini-api/docs/generate-content/get-started)
+
+## 4. Ollama — 로컬 모델
 
 설정 화면에서 **Ollama**를 고릅니다.
 
@@ -51,7 +63,7 @@ FLUX의 `GET /api/provider-account`는 선택된 학교 API 키로 Gateway의 `/
 
 FLUX의 대화 압축 기준과 Ollama의 실제 문맥 창은 별개입니다. AI API 설정의 **Ollama에 요청할 문맥 길이** 또는 `.env`의 `FLUX_OLLAMA_CONTEXT_LENGTH`를 설정하면 FLUX는 각 `/api/chat` 요청에 `options.num_ctx`를 넣습니다. 값이 클수록 GPU/RAM 사용량이 늘어날 수 있으므로 모델·PC 사양에 맞춰 정하세요. LM Studio 등 OpenAI 호환 서버는 표준 Chat Completions 요청에 이 설정이 없으므로 서버별 설정 화면에서 따로 문맥 길이를 지정해야 합니다. [Ollama 문맥 길이 안내](https://docs.ollama.com/faq)
 
-## 4. LM Studio — 로컬 모델
+## 5. LM Studio — 로컬 모델
 
 LM Studio에서 **Developer → Local Server**를 시작한 뒤, 대시보드에서 **LM Studio — 내 PC의 로컬 모델**을 고릅니다.
 
@@ -63,7 +75,7 @@ LM Studio에서 **Developer → Local Server**를 시작한 뒤, 대시보드에
 
 FLUX는 LM Studio의 OpenAI 호환 `POST /v1/chat/completions`를 사용합니다. 문맥 길이는 LM Studio 서버/모델 설정에서 정합니다.
 
-## 5. 사설 API (일반) — Chat Completions 호환 서버
+## 6. 사설 API (일반) — Chat Completions 호환 서버
 
 제공처의 문서에서 다음 중 어느 경로를 지원하는지 먼저 확인하세요.
 

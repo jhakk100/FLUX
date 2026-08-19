@@ -7,7 +7,7 @@ import { getAsset, isSea } from "node:sea";
 import { loadConfig } from "./config.mjs";
 import { openStore } from "./db.mjs";
 import { classifyAction, redactSecret, requiresApproval, resolveInsideWorkspace } from "./security.mjs";
-import { projectInstructionMessage, readProjectInstructions } from "./project-instructions.mjs";
+import { projectInstructionMessage } from "./project-instructions.mjs";
 import { buildModelContext } from "./context.mjs";
 import { createProviderRuntime, getFactchatAccount, providerStatus, publicProviderSettings, streamCompletion, testProviderConnection } from "./providers.mjs";
 import { discordStatus, startDiscordBot } from "./discord.mjs";
@@ -206,7 +206,7 @@ async function generateAssistantReply(session, content, { onDelta = () => {}, ap
   const modelContext = buildModelContext(messages, currentContext, config.contextTokenBudget, config.contextCompactThreshold);
   if (modelContext.context.changed) store.saveSessionContext(session.id, modelContext.context);
   const project = session.projectId ? requireProject(session.projectId) : null;
-  const instruction = project ? projectInstructionMessage(await readProjectInstructions(project.workspacePath)) : null;
+  const instruction = project ? projectInstructionMessage({ source: "FLUX project settings", content: project.instructions }) : null;
   const agentInstructions = agentInstructionsMessage(store.getSetting("agent-instructions") ?? "");
   const responseFormat = responseFormatMessage(store.getSetting("markdown-preferred") ?? true);
   const memory = memoryContextMessage(store.listMemories("", 12));
@@ -406,9 +406,12 @@ async function handle(request, response) {
   if (url.pathname === "/api/projects" && request.method === "POST") {
     const body = await readJson(request);
     if (!body.name?.trim() || !body.workspacePath?.trim()) return json(response, 400, { error: "name and workspacePath are required." });
+    if (body.instructions !== undefined && typeof body.instructions !== "string") return json(response, 400, { error: "instructions must be a string." });
+    const instructions = body.instructions?.trim() ?? "";
+    if (instructions.length > 16_000) return json(response, 400, { error: "instructions must be at most 16,000 characters." });
     const workspacePath = path.resolve(body.workspacePath);
     await fs.mkdir(workspacePath, { recursive: true });
-    return json(response, 201, store.createProject({ name: body.name.trim(), workspacePath }));
+    return json(response, 201, store.createProject({ name: body.name.trim(), workspacePath, instructions }));
   }
   const projectFilesMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/files$/);
   if (projectFilesMatch && request.method === "GET") {
@@ -453,7 +456,16 @@ async function handle(request, response) {
   const projectInstructionsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/instructions$/);
   if (projectInstructionsMatch && request.method === "GET") {
     const project = requireProject(projectInstructionsMatch[1]);
-    return json(response, 200, await readProjectInstructions(project.workspacePath));
+    return json(response, 200, { content: project.instructions, source: "FLUX project settings" });
+  }
+  if (projectInstructionsMatch && request.method === "PUT") {
+    const body = await readJson(request);
+    if (typeof body.instructions !== "string") return json(response, 400, { error: "instructions must be a string." });
+    const instructions = body.instructions.trim();
+    if (instructions.length > 16_000) return json(response, 400, { error: "instructions must be at most 16,000 characters." });
+    const project = store.updateProjectInstructions(projectInstructionsMatch[1], instructions);
+    if (!project) return json(response, 404, { error: "Project not found." });
+    return json(response, 200, project);
   }
   if (url.pathname === "/api/sessions" && request.method === "GET") {
     return json(response, 200, store.listSessions({ archived: url.searchParams.get("archived") === "true" }));
