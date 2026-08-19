@@ -48,6 +48,10 @@ export function loadConfig(env = process.env) {
       allowedUserIds: setting("DISCORD_ALLOWED_USER_IDS", "").split(",").map((value) => value.trim()).filter(Boolean),
       allowedChannelIds: setting("DISCORD_ALLOWED_CHANNEL_IDS", "").split(",").map((value) => value.trim()).filter(Boolean),
     },
+    notion: {
+      apiKey: setting("NOTION_API_KEY", "").trim(),
+      apiVersion: setting("NOTION_API_VERSION", "2026-03-11").trim(),
+    },
   };
 }
 

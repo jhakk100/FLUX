@@ -11,6 +11,7 @@ import { projectInstructionMessage, readProjectInstructions } from "./project-in
 import { buildModelContext } from "./context.mjs";
 import { createProviderRuntime, getFactchatAccount, providerStatus, publicProviderSettings, streamCompletion, testProviderConnection } from "./providers.mjs";
 import { discordStatus, startDiscordBot } from "./discord.mjs";
+import { notionStatus, readNotionPage, searchNotion, testNotionConnection } from "./notion.mjs";
 
 const config = loadConfig();
 const store = openStore(config.dataDirectory);
@@ -246,9 +247,21 @@ async function handle(request, response) {
   if (!isAuthorized(request)) return json(response, 401, { error: "Missing or invalid gateway token." });
 
   if (url.pathname === "/api/overview" && request.method === "GET") {
-    return json(response, 200, { provider: providerStatus(providerRuntime.get()), discord: discordBot.status(), projects: store.listProjects(), sessions: store.listSessions(), approvals: store.listApprovals(), audit: store.listAuditEvents(30) });
+    return json(response, 200, { provider: providerStatus(providerRuntime.get()), discord: discordBot.status(), notion: notionStatus(config.notion), projects: store.listProjects(), sessions: store.listSessions(), approvals: store.listApprovals(), audit: store.listAuditEvents(30) });
   }
   if (url.pathname === "/api/discord/status" && request.method === "GET") return json(response, 200, discordBot.status());
+  if (url.pathname === "/api/notion/status" && request.method === "GET") return json(response, 200, notionStatus(config.notion));
+  if (url.pathname === "/api/notion/test" && request.method === "POST") return json(response, 200, await testNotionConnection(config.notion));
+  if (url.pathname === "/api/notion/search" && request.method === "POST") {
+    const body = await readJson(request);
+    if (typeof body.query !== "undefined" && typeof body.query !== "string") return json(response, 400, { error: "query must be a string." });
+    if (typeof body.cursor !== "undefined" && typeof body.cursor !== "string") return json(response, 400, { error: "cursor must be a string." });
+    return json(response, 200, await searchNotion(config.notion, body));
+  }
+  const notionPageMatch = url.pathname.match(/^\/api\/notion\/pages\/([^/]+)$/);
+  if (notionPageMatch && request.method === "GET") {
+    return json(response, 200, await readNotionPage(config.notion, notionPageMatch[1], { cursor: url.searchParams.get("cursor") }));
+  }
   if (url.pathname === "/api/provider-settings" && request.method === "GET") return json(response, 200, publicProviderSettings(providerRuntime.get()));
   if (url.pathname === "/api/provider-settings" && request.method === "POST") {
     const body = await readJson(request);
