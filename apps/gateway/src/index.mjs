@@ -8,6 +8,7 @@ import { loadConfig } from "./config.mjs";
 import { openStore } from "./db.mjs";
 import { classifyAction, redactSecret, requiresApproval, resolveInsideWorkspace } from "./security.mjs";
 import { projectInstructionMessage, readProjectInstructions } from "./project-instructions.mjs";
+import { buildModelContext } from "./context.mjs";
 import { createProviderRuntime, providerStatus, publicProviderSettings, streamCompletion, testProviderConnection } from "./providers.mjs";
 
 const config = loadConfig();
@@ -342,6 +343,15 @@ async function handle(request, response) {
     if (!store.getSession(sessionMessagesMatch[1])) return json(response, 404, { error: "Session not found." });
     return json(response, 200, store.listMessages(sessionMessagesMatch[1]));
   }
+  const sessionContextMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/context$/);
+  if (sessionContextMatch && request.method === "GET") {
+    const session = store.getSession(sessionContextMatch[1]);
+    if (!session) return json(response, 404, { error: "Session not found." });
+    const messages = store.listMessages(session.id);
+    const context = store.getSessionContext(session.id);
+    const modelContext = buildModelContext(messages, context, config.contextTokenBudget, config.contextCompactThreshold);
+    return json(response, 200, { tokenBudget: config.contextTokenBudget, threshold: config.contextCompactThreshold, estimatedFullTokens: modelContext.fullTokens, estimatedActiveTokens: modelContext.activeTokens, coveredMessageCount: context.coveredCount, tags: context.tags, summary: context.summary, wouldCompact: modelContext.shouldCompact });
+  }
   const cancelChatMatch = url.pathname.match(/^\/api\/chat\/([^/]+)\/cancel$/);
   if (cancelChatMatch && request.method === "POST") {
     const controller = activeChatControllers.get(cancelChatMatch[1]);
@@ -357,6 +367,9 @@ async function handle(request, response) {
     if (activeChatControllers.has(session.id)) return json(response, 409, { error: "This session already has an active generation." });
     store.addMessage({ sessionId: session.id, role: "user", content: body.content.trim() });
     const messages = store.listMessages(session.id);
+    const currentContext = store.getSessionContext(session.id);
+    const modelContext = buildModelContext(messages, currentContext, config.contextTokenBudget, config.contextCompactThreshold);
+    if (modelContext.context.changed) store.saveSessionContext(session.id, modelContext.context);
     const project = session.projectId ? requireProject(session.projectId) : null;
     const instruction = project ? projectInstructionMessage(await readProjectInstructions(project.workspacePath)) : null;
     const memory = memoryContextMessage(store.listMemories("", 12));
@@ -365,7 +378,7 @@ async function handle(request, response) {
     const controller = new AbortController();
     activeChatControllers.set(session.id, controller);
     try {
-      for await (const delta of streamCompletion(providerRuntime.get(), [instruction, memory, ...messages].filter(Boolean), { signal: controller.signal })) {
+      for await (const delta of streamCompletion(providerRuntime.get(), [instruction, memory, modelContext.summaryMessage, ...modelContext.activeMessages].filter(Boolean), { signal: controller.signal })) {
         fullText += delta;
         sse(response, "delta", { text: delta });
       }

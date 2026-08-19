@@ -61,6 +61,13 @@ export function openStore(dataDirectory) {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS session_context (
+      session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+      summary TEXT NOT NULL DEFAULT '',
+      covered_count INTEGER NOT NULL DEFAULT 0,
+      tags TEXT NOT NULL DEFAULT '[]',
+      updated_at TEXT NOT NULL
+    );
   `);
   const sessionColumns = database.prepare("PRAGMA table_info(sessions)").all();
   if (!sessionColumns.some((column) => column.name === "archived_at")) {
@@ -153,6 +160,19 @@ export function openStore(dataDirectory) {
     return database.prepare("SELECT id, session_id AS sessionId, role, content, created_at AS createdAt FROM messages WHERE session_id = ? ORDER BY created_at ASC").all(sessionId);
   }
 
+  function getSessionContext(sessionId) {
+    const row = database.prepare("SELECT summary, covered_count AS coveredCount, tags, updated_at AS updatedAt FROM session_context WHERE session_id = ?").get(sessionId);
+    return row ? { ...row, tags: JSON.parse(row.tags) } : { summary: "", coveredCount: 0, tags: [], updatedAt: null };
+  }
+
+  function saveSessionContext(sessionId, { summary, coveredCount, tags }) {
+    const updatedAt = now();
+    database.prepare("INSERT INTO session_context (session_id, summary, covered_count, tags, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET summary = excluded.summary, covered_count = excluded.covered_count, tags = excluded.tags, updated_at = excluded.updated_at")
+      .run(sessionId, summary, coveredCount, JSON.stringify(tags), updatedAt);
+    audit("session.context_compacted", "session", sessionId, { coveredCount, tags });
+    return getSessionContext(sessionId);
+  }
+
   function listMemories(query = "", limit = 100) {
     const normalized = query.trim();
     if (!normalized) {
@@ -231,5 +251,5 @@ export function openStore(dataDirectory) {
     audit("setting.updated", "setting", key, { key });
   }
 
-  return { close: () => database.close(), createProject, listProjects, getProject, createSession, listSessions, getSession, renameSession, archiveSession, searchSessions, addMessage, listMessages, listMemories, createMemory, updateMemory, deleteMemory, createApproval, listApprovals, getApproval, decideApproval, listAuditEvents, getSetting, setSetting };
+  return { close: () => database.close(), createProject, listProjects, getProject, createSession, listSessions, getSession, renameSession, archiveSession, searchSessions, addMessage, listMessages, getSessionContext, saveSessionContext, listMemories, createMemory, updateMemory, deleteMemory, createApproval, listApprovals, getApproval, decideApproval, listAuditEvents, getSetting, setSetting };
 }

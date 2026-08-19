@@ -15,12 +15,18 @@ export function loadConfig(env = process.env) {
   if (!LOOPBACK_HOSTS.has(host) && !gatewayToken) {
     throw new Error("A non-loopback FLUX_HOST requires FLUX_GATEWAY_TOKEN.");
   }
+  const contextTokenBudget = Number.parseInt(setting("CONTEXT_TOKEN_BUDGET", "24000"), 10);
+  const contextCompactThreshold = Number.parseFloat(setting("CONTEXT_COMPACT_THRESHOLD", "0.75"));
+  if (!Number.isInteger(contextTokenBudget) || contextTokenBudget < 1000) throw new Error("FLUX_CONTEXT_TOKEN_BUDGET must be at least 1000.");
+  if (!Number.isFinite(contextCompactThreshold) || contextCompactThreshold <= 0 || contextCompactThreshold >= 1) throw new Error("FLUX_CONTEXT_COMPACT_THRESHOLD must be between 0 and 1.");
 
   return {
     host,
     port,
     gatewayToken,
     dataDirectory: setting("DATA_DIR", "./data"),
+    contextTokenBudget,
+    contextCompactThreshold,
     provider: setting("PROVIDER", "demo"),
     ollama: {
       baseUrl: setting("OLLAMA_BASE_URL", "http://127.0.0.1:11434").replace(/\/$/, ""),
