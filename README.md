@@ -29,6 +29,8 @@ Node의 단일 실행 파일 기능은 아직 활성 개발 단계라 첫 실행
 
 Ollama를 쓰려면 `.env`에서 `HARU_PROVIDER=ollama`와 모델 이름을 설정합니다. OpenAI 호환 Responses API를 쓰려면 `HARU_PROVIDER=openai-compatible`, API 키, 모델을 설정합니다. API 키는 브라우저나 Git에 저장하지 않습니다.
 
+API 설정 화면과 공급자별 복붙 예시는 [API 연결 안내](./docs/API_SETUP.md)에 있습니다.
+
 ## 현재 포함된 P0 뼈대
 
 - SQLite 기반 세션/메시지/승인/감사 기록

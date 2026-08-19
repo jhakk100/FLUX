@@ -49,6 +49,11 @@ export function openStore(dataDirectory) {
       details TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
 
   const now = () => new Date().toISOString();
@@ -130,5 +135,17 @@ export function openStore(dataDirectory) {
       .map((item) => ({ ...item, details: JSON.parse(item.details) }));
   }
 
-  return { createProject, listProjects, getProject, createSession, listSessions, getSession, addMessage, listMessages, createApproval, listApprovals, decideApproval, listAuditEvents };
+  function getSetting(key) {
+    const row = database.prepare("SELECT value FROM settings WHERE key = ?").get(key);
+    return row ? JSON.parse(row.value) : null;
+  }
+
+  function setSetting(key, value) {
+    const updatedAt = now();
+    database.prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at")
+      .run(key, JSON.stringify(value), updatedAt);
+    audit("setting.updated", "setting", key, { key });
+  }
+
+  return { createProject, listProjects, getProject, createSession, listSessions, getSession, addMessage, listMessages, createApproval, listApprovals, decideApproval, listAuditEvents, getSetting, setSetting };
 }

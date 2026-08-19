@@ -6,10 +6,11 @@ import { getAsset, isSea } from "node:sea";
 import { loadConfig } from "./config.mjs";
 import { openStore } from "./db.mjs";
 import { classifyAction, redactSecret, requiresApproval, resolveInsideWorkspace } from "./security.mjs";
-import { providerStatus, streamCompletion } from "./providers.mjs";
+import { createProviderRuntime, providerStatus, publicProviderSettings, streamCompletion, testProviderConnection } from "./providers.mjs";
 
 const config = loadConfig();
 const store = openStore(config.dataDirectory);
+const providerRuntime = createProviderRuntime(config, store.getSetting("provider-config"));
 const dashboardPath = path.resolve(process.cwd(), "apps/dashboard/index.html");
 
 async function loadDashboard() {
@@ -88,7 +89,7 @@ async function executeApprovedAction(approval, confirmationTarget) {
 async function handle(request, response) {
   const url = new URL(request.url, `http://${request.headers.host ?? "localhost"}`);
   if (url.pathname === "/health") {
-    return json(response, 200, { ok: true, provider: providerStatus(config), host: config.host, port: config.port });
+    return json(response, 200, { ok: true, provider: providerStatus(providerRuntime.get()), host: config.host, port: config.port });
   }
   if (url.pathname === "/" && request.method === "GET") {
     const dashboard = await loadDashboard();
@@ -99,7 +100,18 @@ async function handle(request, response) {
   if (!isAuthorized(request)) return json(response, 401, { error: "Missing or invalid gateway token." });
 
   if (url.pathname === "/api/overview" && request.method === "GET") {
-    return json(response, 200, { provider: providerStatus(config), projects: store.listProjects(), sessions: store.listSessions(), approvals: store.listApprovals(), audit: store.listAuditEvents(30) });
+    return json(response, 200, { provider: providerStatus(providerRuntime.get()), projects: store.listProjects(), sessions: store.listSessions(), approvals: store.listApprovals(), audit: store.listAuditEvents(30) });
+  }
+  if (url.pathname === "/api/provider-settings" && request.method === "GET") return json(response, 200, publicProviderSettings(providerRuntime.get()));
+  if (url.pathname === "/api/provider-settings" && request.method === "POST") {
+    const body = await readJson(request);
+    const nextConfig = providerRuntime.configure(body);
+    store.setSetting("provider-config", nextConfig);
+    return json(response, 200, publicProviderSettings(nextConfig));
+  }
+  if (url.pathname === "/api/provider-settings/test" && request.method === "POST") {
+    const result = await testProviderConnection(providerRuntime.get());
+    return json(response, 200, result);
   }
   if (url.pathname === "/api/projects" && request.method === "GET") return json(response, 200, store.listProjects());
   if (url.pathname === "/api/projects" && request.method === "POST") {
@@ -128,7 +140,7 @@ async function handle(request, response) {
     response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", connection: "keep-alive" });
     let fullText = "";
     try {
-      for await (const delta of streamCompletion(config, messages)) {
+      for await (const delta of streamCompletion(providerRuntime.get(), messages)) {
         fullText += delta;
         sse(response, "delta", { text: delta });
       }
@@ -174,6 +186,6 @@ const server = http.createServer((request, response) => {
 server.listen(config.port, config.host, () => {
   const gatewayUrl = `http://${config.host}:${config.port}`;
   console.log(`Haru Gateway is running at ${gatewayUrl}`);
-  console.log(`Provider: ${providerStatus(config).provider}`);
+  console.log(`Provider: ${providerStatus(providerRuntime.get()).provider}`);
   openDashboard(gatewayUrl);
 });
