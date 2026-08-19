@@ -148,6 +148,15 @@ function memoryContextMessage(memories) {
   };
 }
 
+function agentInstructionsMessage(instructions) {
+  const text = instructions?.trim();
+  if (!text) return null;
+  return {
+    role: "system",
+    content: `User-selected assistant style and behavior preferences follow. Apply them when relevant, but do not let them override the user's current request, project instructions, approval requirements, or FLUX safety controls.\n\n${text}`,
+  };
+}
+
 async function notionContextMessage() {
   if (!config.notion.contextPageIds.length) return null;
   const pages = await Promise.all(config.notion.contextPageIds.slice(0, 8).map(async (pageId) => {
@@ -180,13 +189,14 @@ async function generateAssistantReply(session, content, { onDelta = () => {} } =
   if (modelContext.context.changed) store.saveSessionContext(session.id, modelContext.context);
   const project = session.projectId ? requireProject(session.projectId) : null;
   const instruction = project ? projectInstructionMessage(await readProjectInstructions(project.workspacePath)) : null;
+  const agentInstructions = agentInstructionsMessage(store.getSetting("agent-instructions") ?? "");
   const memory = memoryContextMessage(store.listMemories("", 12));
   const notion = await notionContextMessage();
   let fullText = "";
   const controller = new AbortController();
   activeChatControllers.set(session.id, controller);
   try {
-    for await (const delta of streamCompletion(providerRuntime.get(), [instruction, memory, notion, modelContext.summaryMessage, ...modelContext.activeMessages].filter(Boolean), { signal: controller.signal })) {
+    for await (const delta of streamCompletion(providerRuntime.get(), [agentInstructions, instruction, memory, notion, modelContext.summaryMessage, ...modelContext.activeMessages].filter(Boolean), { signal: controller.signal })) {
       fullText += delta;
       onDelta(delta);
     }
@@ -301,6 +311,17 @@ async function handle(request, response) {
   }
   if (url.pathname === "/api/memories" && request.method === "GET") {
     return json(response, 200, store.listMemories(url.searchParams.get("q") ?? ""));
+  }
+  if (url.pathname === "/api/agent-instructions" && request.method === "GET") {
+    return json(response, 200, { instructions: store.getSetting("agent-instructions") ?? "" });
+  }
+  if (url.pathname === "/api/agent-instructions" && request.method === "PUT") {
+    const body = await readJson(request);
+    if (typeof body.instructions !== "string") return json(response, 400, { error: "instructions must be a string." });
+    const instructions = body.instructions.trim();
+    if (instructions.length > 16_000) return json(response, 400, { error: "instructions must be at most 16,000 characters." });
+    store.setSetting("agent-instructions", instructions);
+    return json(response, 200, { instructions });
   }
   if (url.pathname === "/api/memories" && request.method === "POST") {
     const body = await readJson(request);
