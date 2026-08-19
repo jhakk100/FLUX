@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { notionBlocksToText, notionStatus, readNotionPage, searchNotion, testNotionConnection } from "../src/notion.mjs";
+import { notionBlocksToText, notionStatus, queryNotionDataSource, readNotionPage, searchNotion, testNotionConnection } from "../src/notion.mjs";
 
 const notion = { apiKey: "secret", apiVersion: "2026-03-11" };
 
@@ -51,4 +51,13 @@ test("Notion page reads retrieve page metadata and first-level blocks together",
 test("Notion connection test returns only identity metadata", async () => {
   const result = await testNotionConnection(notion, { fetchImpl: fakeFetch([{ body: { id: "bot-id", name: "Flux", type: "bot" } }], []) });
   assert.deepEqual(result, { ok: true, bot: { id: "bot-id", name: "Flux", type: "bot" } });
+});
+
+test("Notion data source queries remain read-only and pass filters through", async () => {
+  const requests = [];
+  const result = await queryNotionDataSource(notion, "12345678123412341234123456789012", { filter: { property: "Status", status: { equals: "진행" } }, sorts: [{ property: "날짜", direction: "descending" }] }, { fetchImpl: fakeFetch([{ body: { results: [{ id: "page" }] } }], requests) });
+  assert.deepEqual(result, { results: [{ id: "page" }] });
+  assert.equal(requests[0].options.method, "POST");
+  assert.equal(requests[0].url, "https://api.notion.com/v1/data_sources/12345678123412341234123456789012/query");
+  assert.deepEqual(JSON.parse(requests[0].options.body), { page_size: 100, filter: { property: "Status", status: { equals: "진행" } }, sorts: [{ property: "날짜", direction: "descending" }] });
 });

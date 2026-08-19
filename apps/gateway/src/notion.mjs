@@ -81,6 +81,10 @@ function cleanPageId(pageId) {
   return id;
 }
 
+function cleanDataSourceId(dataSourceId) {
+  return cleanPageId(dataSourceId);
+}
+
 export async function readNotionPage(notion, pageId, { cursor = null, fetchImpl = fetch } = {}) {
   const id = cleanPageId(pageId);
   const query = new URLSearchParams({ page_size: "100" });
@@ -90,4 +94,10 @@ export async function readNotionPage(notion, pageId, { cursor = null, fetchImpl 
     notionRequest(notion, `/blocks/${id}/children?${query}`, { fetchImpl }),
   ]);
   return { page, blocks };
+}
+
+export async function queryNotionDataSource(notion, dataSourceId, { cursor = null, filter, sorts } = {}, options) {
+  const id = cleanDataSourceId(dataSourceId);
+  const body = { page_size: 100, ...(cursor ? { start_cursor: cursor } : {}), ...(filter ? { filter } : {}), ...(sorts ? { sorts } : {}) };
+  return notionRequest(notion, `/data_sources/${id}/query`, { method: "POST", body, ...options });
 }

@@ -11,7 +11,7 @@ import { projectInstructionMessage, readProjectInstructions } from "./project-in
 import { buildModelContext } from "./context.mjs";
 import { createProviderRuntime, getFactchatAccount, providerStatus, publicProviderSettings, streamCompletion, testProviderConnection } from "./providers.mjs";
 import { discordStatus, startDiscordBot } from "./discord.mjs";
-import { notionBlocksToText, notionStatus, readNotionPage, searchNotion, testNotionConnection } from "./notion.mjs";
+import { notionBlocksToText, notionStatus, queryNotionDataSource, readNotionPage, searchNotion, testNotionConnection } from "./notion.mjs";
 
 const config = loadConfig();
 const store = openStore(config.dataDirectory);
@@ -304,6 +304,14 @@ async function handle(request, response) {
   const notionPageMatch = url.pathname.match(/^\/api\/notion\/pages\/([^/]+)$/);
   if (notionPageMatch && request.method === "GET") {
     return json(response, 200, await readNotionPage(config.notion, notionPageMatch[1], { cursor: url.searchParams.get("cursor") }));
+  }
+  const notionDataSourceMatch = url.pathname.match(/^\/api\/notion\/data-sources\/([^/]+)\/query$/);
+  if (notionDataSourceMatch && request.method === "POST") {
+    const body = await readJson(request);
+    if (body.cursor !== undefined && typeof body.cursor !== "string") return json(response, 400, { error: "cursor must be a string." });
+    if (body.filter !== undefined && (body.filter === null || typeof body.filter !== "object" || Array.isArray(body.filter))) return json(response, 400, { error: "filter must be an object." });
+    if (body.sorts !== undefined && !Array.isArray(body.sorts)) return json(response, 400, { error: "sorts must be an array." });
+    return json(response, 200, await queryNotionDataSource(config.notion, notionDataSourceMatch[1], body));
   }
   if (url.pathname === "/api/provider-settings" && request.method === "GET") return json(response, 200, publicProviderSettings(providerRuntime.get()));
   if (url.pathname === "/api/provider-settings" && request.method === "POST") {
