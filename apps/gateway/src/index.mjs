@@ -12,6 +12,7 @@ import { buildModelContext } from "./context.mjs";
 import { createProviderRuntime, getFactchatAccount, providerStatus, publicProviderSettings, streamCompletion, testProviderConnection } from "./providers.mjs";
 import { discordStatus, startDiscordBot } from "./discord.mjs";
 import { notionBlocksToText, notionStatus, queryNotionDataSource, readNotionPage, searchNotion, testNotionConnection } from "./notion.mjs";
+import { APP_VERSION, RELEASE_CHANNEL } from "./app-info.mjs";
 
 const config = loadConfig();
 const store = openStore(config.dataDirectory);
@@ -299,7 +300,7 @@ async function handle(request, response) {
   if (!isAuthorized(request)) return json(response, 401, { error: "Missing or invalid gateway token." });
 
   if (url.pathname === "/api/overview" && request.method === "GET") {
-    return json(response, 200, { provider: providerStatus(providerRuntime.get()), discord: discordBot.status(), notion: notionStatus(config.notion), projects: store.listProjects(), sessions: store.listSessions(), approvals: store.listApprovals(), audit: store.listAuditEvents(30) });
+    return json(response, 200, { app: { version: APP_VERSION, channel: RELEASE_CHANNEL }, provider: providerStatus(providerRuntime.get()), discord: discordBot.status(), notion: notionStatus(config.notion), projects: store.listProjects(), sessions: store.listSessions(), approvals: store.listApprovals(), audit: store.listAuditEvents(30) });
   }
   if (url.pathname === "/api/discord/status" && request.method === "GET") return json(response, 200, discordBot.status());
   if (url.pathname === "/api/notion/status" && request.method === "GET") return json(response, 200, notionStatus(config.notion));
