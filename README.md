@@ -25,6 +25,17 @@ node --env-file=.env apps/gateway/src/index.mjs
 
 Windows에서는 [dist/Flux.exe](./dist/Flux.exe)를 더블클릭해 실행할 수 있습니다. 실행 파일은 Node.js를 따로 설치하지 않아도 되며, 로컬 Gateway를 시작한 뒤 브라우저를 엽니다. 같은 폴더의 `.env.example`을 `.env`로 복사하면 Ollama 또는 OpenAI 호환 API 설정을 추가할 수 있습니다. 대화·설정 데이터는 FLUX 폴더 안의 `user-data`에 저장됩니다. FLUX 폴더 전체를 복사하면 이전 대화·프로젝트·API 설정도 함께 이동하며, 처음 실행할 때 기존 `dist/data` 또는 이전 사용자 저장소의 데이터는 자동으로 옮겨옵니다.
 
+## CLI
+
+실행 파일 또는 개발 환경 모두 CLI 채팅을 지원합니다. 실행하면 빨간 `FU` 배너가 표시됩니다.
+
+```powershell
+.\dist\Flux.exe cli chat --message "안녕"
+.\dist\Flux.exe cli chat --project "F:\my-project"
+# 개발 환경
+pnpm cli -- chat --message "안녕"
+```
+
 이전 실행 파일이 `dist/data`에 저장한 `flux.sqlite`는 새 영구 저장 위치가 비어 있을 때 첫 실행 시 복사합니다. 이후 실행 파일을 다시 빌드해도 새 저장 위치의 데이터는 삭제되지 않습니다.
 
 개발자가 실행 파일을 다시 만들려면 의존성을 설치한 뒤 아래 명령을 실행합니다.

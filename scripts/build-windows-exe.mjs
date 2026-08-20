@@ -2,6 +2,7 @@ import { copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { rcedit } from "rcedit";
 
 if (process.platform !== "win32") {
   throw new Error("build:win must be run on Windows because it produces a Windows executable.");
@@ -16,6 +17,8 @@ const bundle = path.join(dist, "flux.cjs");
 const blob = path.join(dist, "flux-prep.blob");
 const seaConfig = path.join(dist, "sea-config.json");
 const executable = path.join(dist, "Flux.exe");
+const icon = path.join(root, "assets", "flux.ico");
+const iconGenerator = path.join(root, "scripts", "create-flux-icon.mjs");
 const esbuildCli = require.resolve("esbuild/bin/esbuild");
 const postjectCli = require.resolve("postject/dist/cli.js");
 const fuse = "NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2";
@@ -26,7 +29,7 @@ function run(command, args) {
   if (result.status !== 0) throw new Error(`${path.basename(command)} failed with exit code ${result.status}.`);
 }
 
-for (const requirement of [entry, dashboard, esbuildCli, postjectCli]) {
+for (const requirement of [entry, dashboard, iconGenerator, esbuildCli, postjectCli]) {
   if (!existsSync(requirement)) throw new Error(`Missing build requirement: ${requirement}`);
 }
 
@@ -44,6 +47,8 @@ writeFileSync(seaConfig, JSON.stringify({
 run(process.execPath, ["--experimental-sea-config", seaConfig]);
 copyFileSync(process.execPath, executable);
 run(process.execPath, [postjectCli, executable, "NODE_SEA_BLOB", blob, "--sentinel-fuse", fuse]);
+run(process.execPath, [iconGenerator, icon]);
+await rcedit(executable, { icon });
 copyFileSync(path.join(root, ".env.example"), path.join(dist, ".env.example"));
 writeFileSync(path.join(dist, "README.txt"), [
   "FLUX 실행 파일",
@@ -51,8 +56,9 @@ writeFileSync(path.join(dist, "README.txt"), [
   "1. Flux.exe를 더블클릭합니다.",
   "2. 브라우저가 자동으로 열리지 않으면 http://127.0.0.1:4317 을 엽니다.",
   "3. Ollama 또는 OpenAI 호환 API를 사용하려면 .env.example을 .env로 복사한 뒤 값을 설정합니다.",
+  "4. 명령줄 채팅은 `Flux.exe cli chat` 또는 `Flux.exe cli chat --message \"질문\"`으로 실행합니다.",
   "",
-  "대화와 설정은 Windows의 %LOCALAPPDATA%\\FLUX\\data에 저장됩니다.",
-  "API 키와 data 폴더는 Git에 올리지 마세요.",
+  "대화와 설정은 FLUX 폴더의 user-data에 저장됩니다.",
+  "API 키와 user-data 폴더는 Git에 올리지 마세요.",
 ].join("\r\n"));
 console.log(`Created ${executable}`);
