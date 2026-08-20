@@ -14,7 +14,7 @@ const RESET = "\x1b[0m";
 const BANNER = ["███████╗██╗   ██╗", "██╔════╝██║   ██║", "█████╗  ██║   ██║", "██╔══╝  ██║   ██║", "██║     ╚██████╔╝", "╚═╝      ╚═════╝ ", "  local AI orchestrator"].join("\n");
 
 function printBanner() { console.log(`${RED}${BANNER}${RESET}`); }
-function usage() { console.log("\nFLUX CLI 사용법:\n  flux --help | -help\n  flux -chat \"질문\" [--project C:\\path\\to\\project] [--provider ollama] [--model 모델ID]\n  flux chat --message \"질문\" [--project C:\\path\\to\\project]\n  flux chat                         # 대화형 모드\n  flux status                       # 현재 공급자 확인\n  flux connect [1|2]                # 1: LLM·모델 API, 2: 부가 서비스 API\n  flux install                      # PATH 등록을 다시 수행\n\n--provider/--model은 만든 CLI 대화에만 적용됩니다. 최초 GUI 실행 시 사용자 PATH에 flux 명령이 자동 등록됩니다. 새 터미널을 열어 사용하세요. 대화 중 /exit 또는 /quit을 입력하면 종료합니다."); }
+function usage() { console.log("\nFLUX CLI 사용법:\n  flux --help | -help\n  flux -chat \"질문\" [--project C:\\path\\to\\project] [--provider ollama] [--model 모델ID]\n  flux chat --message \"질문\" [--project C:\\path\\to\\project]\n  flux chat                         # 대화형 모드\n  flux status                       # 현재 공급자 확인\n  flux api [1|2]                    # 1: LLM·모델 API, 2: 부가 서비스 API\n  flux install                      # PATH 등록을 다시 수행\n\n--provider/--model은 만든 CLI 대화에만 적용됩니다. 최초 GUI 실행 시 사용자 PATH에 flux 명령이 자동 등록됩니다. 새 터미널을 열어 사용하세요. 대화 중 /exit 또는 /quit을 입력하면 종료합니다."); }
 
 export function connectionReport(config, providerConfig, group) {
   if (group === "1") {
@@ -30,7 +30,7 @@ export function connectionReport(config, providerConfig, group) {
     const notionReady = Boolean(config.notion.apiKey);
     return ["[2] 부가 서비스 API", `${discordReady ? "●" : "○"} Discord · ${discordReady ? "준비됨" : "토큰 또는 허용 사용자 설정 필요"}`, `${notionReady ? "●" : "○"} Notion 읽기 연결 · ${notionReady ? "준비됨" : "API 키 설정 필요"}`, "", "부가 서비스 토큰은 .env 또는 FLUX 환경 변수로 설정합니다. 채팅용 LLM API와 분리되어 있습니다."].join("\n");
   }
-  return "연결 종류를 선택하세요.\n  1) LLM·모델 API\n  2) 부가 서비스 API\n\n예: flux connect 1";
+  return "API 종류를 선택하세요.\n  1) LLM·모델 API\n  2) 부가 서비스 API\n\n예: flux api 1";
 }
 
 function parseArguments(argv) {
@@ -105,11 +105,11 @@ export async function runCli({ config, store, providerRuntime, argv = process.ar
     console.log(`공급자: ${status.provider}\n모델: ${status.model ?? "선택되지 않음"}\n상태: ${status.configured ? "준비됨" : "설정 필요"}`);
     return;
   }
-  if (options.command === "connect") {
+  if (options.command === "api") {
     let group = options.message.trim();
     if (!group && input.isTTY) {
       const terminal = readline.createInterface({ input, output });
-      try { group = (await terminal.question("연결 종류 선택 (1: LLM·모델 API, 2: 부가 서비스 API): ")).trim(); } finally { terminal.close(); }
+      try { group = (await terminal.question("API 종류 선택 (1: LLM·모델 API, 2: 부가 서비스 API): ")).trim(); } finally { terminal.close(); }
     }
     console.log(connectionReport(config, providerRuntime.get(), group));
     if (group && !["1", "2"].includes(group)) process.exitCode = 2;
