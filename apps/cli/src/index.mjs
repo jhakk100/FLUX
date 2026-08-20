@@ -5,19 +5,23 @@ import { stdin as input, stdout as output } from "node:process";
 import { buildModelContext } from "../../gateway/src/context.mjs";
 import { streamCompletion, providerStatus } from "../../gateway/src/providers.mjs";
 import { assertSafeWorkspacePath } from "../../gateway/src/security.mjs";
+import { registerFluxCommandManually } from "./command-path.mjs";
+import { APP_VERSION } from "../../gateway/src/app-info.mjs";
 
 const RED = "\x1b[31m";
 const RESET = "\x1b[0m";
 const BANNER = ["███████╗██╗   ██╗", "██╔════╝██║   ██║", "█████╗  ██║   ██║", "██╔══╝  ██║   ██║", "██║     ╚██████╔╝", "╚═╝      ╚═════╝ ", "  local AI orchestrator"].join("\n");
 
 function printBanner() { console.log(`${RED}${BANNER}${RESET}`); }
-function usage() { console.log("\n사용법:\n  Flux.exe cli chat --message \"질문\" [--project C:\\path\\to\\project]\n  Flux.exe cli chat [--project C:\\path\\to\\project]\n\n대화 중 /exit 또는 /quit을 입력하면 종료합니다."); }
+function usage() { console.log("\nFLUX CLI 사용법:\n  flux --help | -help\n  flux -chat \"질문\" [--project C:\\path\\to\\project]\n  flux chat --message \"질문\" [--project C:\\path\\to\\project]\n  flux chat                         # 대화형 모드\n  flux status                       # 현재 공급자 확인\n  flux install                      # PATH 등록을 다시 수행\n\n최초 GUI 실행 시 사용자 PATH에 flux 명령이 자동 등록됩니다. 새 터미널을 열어 사용하세요. 대화 중 /exit 또는 /quit을 입력하면 종료합니다."); }
 
 function parseArguments(argv) {
   const tokens = [...argv];
   if (tokens[0] === "cli" || tokens[0] === "--cli") tokens.shift();
   if (tokens[0] === "--") tokens.shift();
-  const options = { command: tokens.shift() ?? "chat", message: "", projectPath: "" };
+  const aliases = { "-chat": "chat", "--chat": "chat", "-help": "help", "--help": "help", "-h": "help", "-version": "version", "--version": "version", "-v": "version", "install-cli": "install", "--install-cli": "install" };
+  const requestedCommand = tokens.shift() ?? "chat";
+  const options = { command: aliases[requestedCommand] ?? requestedCommand, message: "", projectPath: "" };
   const remaining = [];
   while (tokens.length) {
     const token = tokens.shift();
@@ -53,12 +57,27 @@ async function sendMessage({ config, store, providerRuntime, session, project, c
   store.addMessage({ sessionId: session.id, role: "assistant", content: answer });
 }
 
-export function isCliInvocation(argv = process.argv.slice(2)) { return argv[0] === "cli" || argv[0] === "--cli"; }
+export function isCliInvocation(argv = process.argv.slice(2)) {
+  return ["cli", "--cli", "install-cli", "--install-cli"].includes(argv[0]);
+}
 
 export async function runCli({ config, store, providerRuntime, argv = process.argv.slice(2) }) {
   const options = parseArguments(argv);
   printBanner();
-  if (["help", "--help", "-h"].includes(options.command)) return usage();
+  if (options.command === "help") return usage();
+  if (options.command === "version") return console.log(`FLUX ${APP_VERSION}`);
+  if (options.command === "install") {
+    const result = await registerFluxCommandManually({ dataDirectory: config.dataDirectory });
+    if (result.state !== "ready") return console.log(result.message);
+    console.log(`flux 명령을 등록했습니다: ${result.commandPath}`);
+    console.log(result.pathUpdated ? "새 터미널을 열면 flux 명령을 바로 사용할 수 있습니다." : "PATH가 이미 등록되어 있습니다. 새 터미널을 열어 사용하세요.");
+    return;
+  }
+  if (options.command === "status") {
+    const status = providerStatus(providerRuntime.get());
+    console.log(`공급자: ${status.provider}\n모델: ${status.model ?? "선택되지 않음"}\n상태: ${status.configured ? "준비됨" : "설정 필요"}`);
+    return;
+  }
   if (options.command !== "chat") {
     console.error(`지원하지 않는 CLI 명령: ${options.command}`);
     usage();

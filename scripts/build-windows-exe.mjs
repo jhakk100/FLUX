@@ -56,7 +56,7 @@ writeFileSync(path.join(dist, "README.txt"), [
   "1. Flux.exe를 더블클릭합니다.",
   "2. 브라우저가 자동으로 열리지 않으면 http://127.0.0.1:4317 을 엽니다.",
   "3. Ollama 또는 OpenAI 호환 API를 사용하려면 .env.example을 .env로 복사한 뒤 값을 설정합니다.",
-  "4. 명령줄 채팅은 `Flux.exe cli chat` 또는 `Flux.exe cli chat --message \"질문\"`으로 실행합니다.",
+  "4. 최초 GUI 실행 뒤 새 터미널에서 `flux --help`를 입력합니다. `flux -chat \"질문\"`으로 명령줄 채팅을 시작할 수 있습니다.",
   "",
   "대화와 설정은 FLUX 폴더의 user-data에 저장됩니다.",
   "API 키와 user-data 폴더는 Git에 올리지 마세요.",

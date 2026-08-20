@@ -14,11 +14,25 @@ import { discordStatus, startDiscordBot } from "./discord.mjs";
 import { notionBlocksToText, notionStatus, queryNotionDataSource, readNotionPage, searchNotion, testNotionConnection } from "./notion.mjs";
 import { APP_VERSION, RELEASE_CHANNEL } from "./app-info.mjs";
 import { isCliInvocation, runCli } from "../../cli/src/index.mjs";
+import { getFluxCommandRegistration, registerFluxCommandManually, registerFluxCommandOnFirstLaunch } from "../../cli/src/command-path.mjs";
 
 const config = loadConfig();
 const store = openStore(config.dataDirectory, { legacyDataDirectories: config.legacyDataDirectories });
 const providerRuntime = createProviderRuntime(config, store.getSetting("provider-config"));
 const cliMode = isCliInvocation();
+let cliRegistration = { automaticAttempted: false, state: "checking", message: "CLI PATH 등록 상태를 확인 중입니다." };
+const cliRegistrationReady = getFluxCommandRegistration(config.dataDirectory).then(async (existing) => {
+  cliRegistration = existing;
+  if (!cliMode && isSea()) {
+    cliRegistration = await registerFluxCommandOnFirstLaunch({ dataDirectory: config.dataDirectory });
+    if (cliRegistration.state === "ready") console.log("FLUX CLI command registered. Open a new terminal and run: flux --help");
+    if (cliRegistration.state === "failed") console.warn(`FLUX CLI command registration failed: ${cliRegistration.message}`);
+  }
+  return cliRegistration;
+}).catch((error) => {
+  cliRegistration = { automaticAttempted: true, state: "failed", message: `CLI PATH 등록 상태 확인 실패: ${error.message}` };
+  return cliRegistration;
+});
 const dashboardPath = path.resolve(process.cwd(), "apps/dashboard/index.html");
 const activeChatControllers = new Map();
 let discordBot = { status: () => ({ ...discordStatus(config.discord), connected: false }) };
@@ -488,7 +502,8 @@ async function handle(request, response) {
   if (!isAuthorized(request)) return json(response, 401, { error: "Missing or invalid gateway token." });
 
   if (url.pathname === "/api/overview" && request.method === "GET") {
-    return json(response, 200, { app: { version: APP_VERSION, channel: RELEASE_CHANNEL }, provider: providerStatus(providerRuntime.get()), discord: discordBot.status(), notion: notionStatus(config.notion), projects: store.listProjects(), sessions: store.listSessions(), approvals: store.listApprovals(), audit: store.listAuditEvents(30) });
+    await cliRegistrationReady;
+    return json(response, 200, { app: { version: APP_VERSION, channel: RELEASE_CHANNEL }, cli: cliRegistration, provider: providerStatus(providerRuntime.get()), discord: discordBot.status(), notion: notionStatus(config.notion), projects: store.listProjects(), sessions: store.listSessions(), approvals: store.listApprovals(), audit: store.listAuditEvents(30) });
   }
   if (url.pathname === "/api/discord/status" && request.method === "GET") return json(response, 200, discordBot.status());
   if (url.pathname === "/api/notion/status" && request.method === "GET") return json(response, 200, notionStatus(config.notion));
@@ -512,6 +527,12 @@ async function handle(request, response) {
     return json(response, 200, await queryNotionDataSource(config.notion, notionDataSourceMatch[1], body));
   }
   if (url.pathname === "/api/provider-settings" && request.method === "GET") return json(response, 200, publicProviderSettings(providerRuntime.get()));
+  if (url.pathname === "/api/cli-path" && request.method === "GET") { await cliRegistrationReady; return json(response, 200, cliRegistration); }
+  if (url.pathname === "/api/cli-path/register" && request.method === "POST") {
+    await cliRegistrationReady;
+    cliRegistration = await registerFluxCommandManually({ dataDirectory: config.dataDirectory });
+    return json(response, cliRegistration.state === "ready" ? 200 : 500, cliRegistration);
+  }
   if (url.pathname === "/api/provider-settings/secret" && request.method === "GET") {
     return json(response, 200, getStoredProviderSecret(providerRuntime.get(), url.searchParams.get("provider")));
   }

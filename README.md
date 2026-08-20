@@ -6,7 +6,7 @@ Windows와 Linux에서 실행되는 로컬 우선 개인 AI 오케스트레이�
 
 ## 버전
 
-베타 기간에는 Semantic Versioning의 `0.1.x`를 사용합니다. 현재 버전은 `0.1.41`이며, `x`는 Git 커밋 순번입니다. 큰 기능 묶음이 안정화되면 `0.2.0`처럼 올립니다. 실행 중인 앱의 버전·연결 상태는 대시보드의 **설정**에서 확인할 수 있습니다.
+베타 기간에는 Semantic Versioning의 `0.1.x`를 사용합니다. 현재 버전은 `0.1.42`이며, `x`는 Git 커밋 순번입니다. 큰 기능 묶음이 안정화되면 `0.2.0`처럼 올립니다. 실행 중인 앱의 버전·연결 상태는 대시보드의 **설정**에서 확인할 수 있습니다.
 
 개발용 Node.js·pnpm 설치와 설치 파일 보관 절차는 [개발 환경 설치 안내](./setup/README.md)에 있습니다.
 
@@ -27,11 +27,15 @@ Windows에서는 [dist/Flux.exe](./dist/Flux.exe)를 더블클릭해 실행할 �
 
 ## CLI
 
-실행 파일 또는 개발 환경 모두 CLI 채팅을 지원합니다. 실행하면 빨간 `FU` 배너가 표시됩니다.
+실행 파일을 처음 GUI로 실행하면 사용자 PATH에 `flux` 명령을 한 번 자동 등록합니다. 새 PowerShell·명령 프롬프트를 연 뒤 사용하세요. 자동 등록에 실패한 경우 **설정 → CLI 명령 → flux PATH 등록** 버튼 또는 `Flux.exe --install-cli`로 수동 등록할 수 있습니다. 실행하면 빨간 `FU` 배너가 표시됩니다.
 
 ```powershell
-.\dist\Flux.exe cli chat --message "안녕"
-.\dist\Flux.exe cli chat --project "F:\my-project"
+flux --help
+flux -chat "안녕"
+flux chat --project "F:\my-project"
+flux status
+# PATH를 수동으로 등록할 때
+.\dist\Flux.exe --install-cli
 # 개발 환경
 pnpm cli -- chat --message "안녕"
 ```

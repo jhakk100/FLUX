@@ -198,5 +198,37 @@
         });
       })();
     </script>
+    <script>
+      // The automatic PATH attempt happens only on FLUX's first packaged launch.
+      // Keep its recovery action in Settings so a failed attempt is never silent.
+      (() => {
+        const settingsForm = document.querySelector("#settings-dialog form");
+        const closeRow = settingsForm.querySelector('button[value="cancel"]').closest(".row");
+        const cliSection = document.createElement("section");
+        cliSection.innerHTML = '<h3>CLI 명령</h3><p id="cli-path-status" class="muted">CLI PATH 등록 상태를 확인 중입니다.</p><div class="row"><button id="register-cli-path" type="button" class="secondary">flux PATH 등록</button></div>';
+        settingsForm.insertBefore(cliSection, closeRow);
+
+        async function renderCliRegistration() {
+          const result = await (await api("/api/cli-path")).json();
+          const status = $("#cli-path-status");
+          status.textContent = result.state === "ready" ? "준비됨 — 새 터미널에서 flux --help를 입력하세요." : `${result.message}\n자동 등록에 실패했거나 등록되지 않았다면 아래 버튼으로 다시 등록할 수 있습니다.`;
+          $("#register-cli-path").disabled = result.state === "checking";
+          return result;
+        }
+        async function registerCliPath() {
+          const result = await (await api("/api/cli-path/register", { method: "POST", body: "{}" })).json();
+          await renderCliRegistration();
+          if (result.state !== "ready") alert(`CLI PATH 등록 실패: ${result.message}`);
+        }
+        $("#settings").onclick = async () => { try { await openSettings(); await renderCliRegistration(); } catch (error) { alert(error.message); } };
+        $("#register-cli-path").onclick = () => registerCliPath().catch((error) => { $("#cli-path-status").textContent = `CLI PATH 등록 실패: ${error.message}`; });
+        setTimeout(() => renderCliRegistration().then((result) => {
+          if (result.state === "failed" && !sessionStorage.getItem("flux-cli-registration-warning")) {
+            sessionStorage.setItem("flux-cli-registration-warning", "shown");
+            alert(`flux CLI 자동 등록에 실패했습니다.\n설정 → CLI 명령에서 “flux PATH 등록”을 누르거나, Flux.exe --install-cli를 실행하세요.\n\n${result.message}`);
+          }
+        }).catch(() => {}), 800);
+      })();
+    </script>
   </body>
 </html>
