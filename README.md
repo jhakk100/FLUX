@@ -48,7 +48,12 @@ pnpm cli -- chat --message "안녕"
 개발자가 실행 파일을 다시 만들려면 의존성을 설치한 뒤 아래 명령을 실행합니다.
 
 ```powershell
+# 권장: 빌드 후 고아 Node 프로세스까지 자동 검사
+pnpm run build:verified
+# 빌드만 실행
 pnpm run build:win
+# 필요할 때 고아 빌드 프로세스만 별도 검사
+pnpm run check:build-processes
 ```
 
 비대화형 환경에서는 `CI=true`를 함께 지정해도 됩니다.
