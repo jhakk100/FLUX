@@ -2,7 +2,6 @@ import { copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { rcedit } from "rcedit";
 
 if (process.platform !== "win32") {
   throw new Error("build:win must be run on Windows because it produces a Windows executable.");
@@ -21,15 +20,20 @@ const icon = path.join(root, "assets", "flux.ico");
 const iconGenerator = path.join(root, "scripts", "create-flux-icon.mjs");
 const esbuildCli = require.resolve("esbuild/bin/esbuild");
 const postjectCli = require.resolve("postject/dist/cli.js");
+const rceditEntry = require.resolve("rcedit");
+const rceditCli = path.join(path.dirname(rceditEntry), "..", "bin", process.arch === "ia32" ? "rcedit.exe" : "rcedit-x64.exe");
 const fuse = "NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2";
 
-function run(command, args) {
-  const result = spawnSync(command, args, { cwd: root, stdio: "inherit", shell: false });
-  if (result.error) throw result.error;
+function run(command, args, { timeoutMs } = {}) {
+  const result = spawnSync(command, args, { cwd: root, stdio: "inherit", shell: false, timeout: timeoutMs });
+  if (result.error) {
+    if (result.error.code === "ETIMEDOUT") throw new Error(`${path.basename(command)} exceeded its ${Math.round(timeoutMs / 1000)} second time limit.`);
+    throw result.error;
+  }
   if (result.status !== 0) throw new Error(`${path.basename(command)} failed with exit code ${result.status}.`);
 }
 
-for (const requirement of [entry, dashboard, iconGenerator, esbuildCli, postjectCli]) {
+for (const requirement of [entry, dashboard, iconGenerator, esbuildCli, postjectCli, rceditCli]) {
   if (!existsSync(requirement)) throw new Error(`Missing build requirement: ${requirement}`);
 }
 
@@ -48,7 +52,15 @@ run(process.execPath, ["--experimental-sea-config", seaConfig]);
 copyFileSync(process.execPath, executable);
 run(process.execPath, [postjectCli, executable, "NODE_SEA_BLOB", blob, "--sentinel-fuse", fuse]);
 run(process.execPath, [iconGenerator, icon]);
-await rcedit(executable, { icon });
+// node-rcedit's async wrapper can keep pnpm/node alive indefinitely on some Windows systems.
+// Invoke its bundled executable directly with a bounded wait so every build process terminates.
+try {
+  run(rceditCli, [executable, "--set-icon", icon], { timeoutMs: 15_000 });
+} catch (error) {
+  // The single executable is already complete at this point. An icon is cosmetic,
+  // so leave it usable instead of allowing a stuck resource editor to orphan Node.
+  console.warn(`Icon update skipped: ${error.message}`);
+}
 copyFileSync(path.join(root, ".env.example"), path.join(dist, ".env.example"));
 writeFileSync(path.join(dist, "README.txt"), [
   "FLUX 실행 파일",
