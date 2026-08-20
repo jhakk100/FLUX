@@ -280,6 +280,19 @@ export function publicProviderSettings(config) {
   };
 }
 
+// Deliberately separate this from publicProviderSettings(): the dashboard only
+// asks for a key after the user explicitly presses that provider's "표시" button.
+export function getStoredProviderSecret(config, provider) {
+  const connections = {
+    lmstudio: config.lmstudio,
+    "google-ai": config.googleAi,
+    openai: config.openai,
+    factchat: config.factchat,
+  };
+  if (!Object.hasOwn(connections, provider)) throw new Error("Unsupported provider secret.");
+  return { apiKey: connections[provider]?.apiKey ?? "" };
+}
+
 export async function testProviderConnection(config) {
   if (config.provider === "demo") return { ok: true, message: "Demo 모드는 외부 API 연결 없이 바로 사용할 수 있습니다." };
   if (config.provider === "ollama") {

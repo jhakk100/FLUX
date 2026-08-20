@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createProviderRuntime, listAvailableModels, providerStatus, publicProviderSettings, streamCompletion } from "../src/providers.mjs";
+import { createProviderRuntime, getStoredProviderSecret, listAvailableModels, providerStatus, publicProviderSettings, streamCompletion } from "../src/providers.mjs";
 
 const baseConfig = {
   provider: "demo",
@@ -31,6 +31,14 @@ test("an empty API key leaves an existing saved key intact until explicitly clea
   assert.equal(runtime.get().openai.apiKey, "keep-me");
   runtime.configure({ provider: "openai-compatible", clearApiKey: true });
   assert.equal(runtime.get().openai.apiKey, "");
+});
+
+test("a saved key can be returned only by the explicit provider-secret accessor", () => {
+  const runtime = createProviderRuntime(baseConfig);
+  runtime.configure({ provider: "factchat", factchatApiKey: "university-secret", factchatModel: "gpt-5-nano" });
+  assert.equal(publicProviderSettings(runtime.get()).factchatApiKeyConfigured, true);
+  assert.equal(getStoredProviderSecret(runtime.get(), "factchat").apiKey, "university-secret");
+  assert.throws(() => getStoredProviderSecret(runtime.get(), "ollama"), /Unsupported provider secret/);
 });
 
 test("Ollama context length is retained separately from FLUX compaction settings", () => {
