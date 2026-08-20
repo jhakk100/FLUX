@@ -31,7 +31,7 @@
         <div class="utility-grid"><button id="new-project" class="secondary">프로젝트 추가</button><button id="project-files" class="secondary">파일</button><button id="settings" class="secondary">설정</button></div>
       </aside>
       <section>
-        <div class="row"><h2 id="session-title">대화 선택</h2></div>
+        <div class="row"><h2 id="session-title">대화 선택</h2><small id="session-model-label" class="muted"></small><button id="session-model" type="button" class="secondary" disabled>모델</button></div>
         <div id="chat" class="chat"><p class="muted">왼쪽에서 대화를 만들거나 선택하세요.</p></div>
         <form id="composer" class="composer"><button id="context-meter" type="button" class="context-meter" disabled data-tooltip="대화를 선택하면 문맥 상태가 표시됩니다." aria-label="문맥 상태">◔</button><textarea id="message" placeholder="메시지를 입력하세요. Enter로 전송, Shift+Enter로 줄바꿈" disabled></textarea><button id="send" disabled>전송</button><button id="regenerate" type="button" class="secondary" disabled>재생성</button><button id="stop" type="button" class="danger" disabled>중지</button></form>
       </section>
@@ -228,6 +228,42 @@
             alert(`flux CLI 자동 등록에 실패했습니다.\n설정 → CLI 명령에서 “flux PATH 등록”을 누르거나, Flux.exe --install-cli를 실행하세요.\n\n${result.message}`);
           }
         }).catch(() => {}), 800);
+      })();
+    </script>
+    <script>
+      // Per-conversation model selection: this never changes the global API setup.
+      (() => {
+        document.body.insertAdjacentHTML("beforeend", '<dialog id="session-model-dialog"><form method="dialog"><h2>이 대화의 모델</h2><p class="muted">이 대화에만 적용됩니다. 비워 두면 전역 기본 공급자·모델을 사용합니다.</p><label>공급자<select id="session-model-provider"><option value="">전역 기본값</option><option value="ollama">Ollama</option><option value="lm-studio">LM Studio</option><option value="google-ai">Google AI · Gemini</option><option value="openai-compatible">OpenAI 호환 Responses</option><option value="openai-chat-compatible">일반 Chat Completions</option><option value="factchat">조선대 FactChat</option><option value="factchat-responses">조선대 FactChat Responses</option></select></label><label>모델 ID (선택)<input id="session-model-id" spellcheck="false" placeholder="예: gpt-5-nano" /></label><p id="session-model-result" class="muted"></p><div class="row" style="justify-content:end"><button value="cancel" class="secondary">취소</button><button id="reset-session-model" type="button" class="secondary">전역 기본값으로</button><button id="save-session-model" type="button">저장</button></div></form></dialog>');
+        const modelButton = $("#session-model");
+        const modelLabel = $("#session-model-label");
+        async function refreshSessionModelControl() {
+          if (!state.activeSession) { modelButton.disabled = true; modelLabel.textContent = ""; return; }
+          try {
+            const result = await (await api(`/api/sessions/${state.activeSession.id}/model`)).json();
+            modelButton.disabled = false;
+            modelLabel.textContent = `${result.effective.provider}${result.effective.model ? ` · ${result.effective.model}` : ""}${result.providerOverride || result.modelOverride ? " (이 대화)" : ""}`;
+          } catch (error) { modelButton.disabled = true; modelLabel.textContent = "모델 확인 실패"; }
+        }
+        async function openSessionModelDialog() {
+          if (!state.activeSession) return;
+          const result = await (await api(`/api/sessions/${state.activeSession.id}/model`)).json();
+          $("#session-model-provider").value = result.providerOverride ?? "";
+          $("#session-model-id").value = result.modelOverride ?? "";
+          $("#session-model-result").textContent = `현재 적용: ${result.effective.provider}${result.effective.model ? ` · ${result.effective.model}` : ""}`;
+          $("#session-model-dialog").showModal();
+        }
+        async function saveSessionModel(reset = false) {
+          if (!state.activeSession) return;
+          const body = reset ? { providerOverride: null, modelOverride: null } : { providerOverride: $("#session-model-provider").value || null, modelOverride: $("#session-model-id").value.trim() || null };
+          const result = await (await api(`/api/sessions/${state.activeSession.id}/model`, { method: "PUT", body: JSON.stringify(body) })).json();
+          $("#session-model-result").textContent = `저장됨: ${result.effective.provider}${result.effective.model ? ` · ${result.effective.model}` : ""}`;
+          await refreshSessionModelControl();
+        }
+        modelButton.onclick = () => openSessionModelDialog().catch((error) => alert(error.message));
+        $("#save-session-model").onclick = () => saveSessionModel().catch((error) => { $("#session-model-result").textContent = `저장 실패: ${error.message}`; });
+        $("#reset-session-model").onclick = () => saveSessionModel(true).catch((error) => { $("#session-model-result").textContent = `저장 실패: ${error.message}`; });
+        new MutationObserver(() => refreshSessionModelControl()).observe($("#session-title"), { childList: true, characterData: true, subtree: true });
+        setTimeout(() => refreshSessionModelControl(), 0);
       })();
     </script>
   </body>

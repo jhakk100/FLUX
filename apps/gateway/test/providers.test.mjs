@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createProviderRuntime, getStoredProviderSecret, listAvailableModels, providerStatus, publicProviderSettings, streamCompletion } from "../src/providers.mjs";
+import { createProviderRuntime, getStoredProviderSecret, listAvailableModels, providerStatus, publicProviderSettings, resolveSessionProvider, streamCompletion } from "../src/providers.mjs";
 
 const baseConfig = {
   provider: "demo",
@@ -31,6 +31,17 @@ test("an empty API key leaves an existing saved key intact until explicitly clea
   assert.equal(runtime.get().openai.apiKey, "keep-me");
   runtime.configure({ provider: "openai-compatible", clearApiKey: true });
   assert.equal(runtime.get().openai.apiKey, "");
+});
+
+test("a session model override reuses configured provider credentials without mutating global settings", () => {
+  const runtime = createProviderRuntime(baseConfig);
+  runtime.configure({ provider: "ollama", ollamaModel: "global-local", factchatApiKey: "school-key", factchatModel: "school-default" });
+  const selected = resolveSessionProvider(runtime.get(), { providerOverride: "factchat", modelOverride: "gpt-5-nano" });
+  assert.equal(providerStatus(selected).provider, "factchat");
+  assert.equal(selected.factchat.model, "gpt-5-nano");
+  assert.equal(selected.factchat.apiKey, "school-key");
+  assert.equal(runtime.get().ollama.model, "global-local");
+  assert.throws(() => resolveSessionProvider(runtime.get(), { providerOverride: "unknown" }), /Unsupported session provider/);
 });
 
 test("a saved key can be returned only by the explicit provider-secret accessor", () => {

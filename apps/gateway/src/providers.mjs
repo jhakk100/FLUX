@@ -4,6 +4,22 @@ function asConversation(messages) {
 
 const PROVIDERS = new Set(["demo", "ollama", "lm-studio", "openai-compatible", "openai-chat-compatible", "factchat", "factchat-responses", "google-ai"]);
 
+export function resolveSessionProvider(config, { providerOverride = null, modelOverride = null } = {}) {
+  const next = cloneConfig(config);
+  const provider = providerOverride || next.provider;
+  if (!PROVIDERS.has(provider)) throw new Error("Unsupported session provider.");
+  const model = String(modelOverride ?? "").trim();
+  next.provider = provider;
+  if (!model) return next;
+  if (provider === "demo") throw new Error("Demo provider does not accept a model override.");
+  if (provider === "ollama") next.ollama.model = model;
+  else if (provider === "lm-studio") next.lmstudio.model = model;
+  else if (["openai-compatible", "openai-chat-compatible"].includes(provider)) next.openai.model = model;
+  else if (["factchat", "factchat-responses"].includes(provider)) next.factchat.model = model;
+  else if (provider === "google-ai") next.googleAi.model = model.replace(/^models\//, "");
+  return next;
+}
+
 function normalizeBaseUrl(value) {
   return String(value ?? "").trim().replace(/\/$/, "");
 }

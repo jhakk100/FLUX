@@ -9,7 +9,7 @@ import { openStore } from "./db.mjs";
 import { FileApprovalMode, assertSafeWorkspacePath, classifyAction, isFileApprovalMode, redactSecret, requiresInteractiveFileApproval, resolveInsideWorkspace } from "./security.mjs";
 import { projectInstructionMessage } from "./project-instructions.mjs";
 import { buildModelContext } from "./context.mjs";
-import { createProviderRuntime, getFactchatAccount, getStoredProviderSecret, listAvailableModels, providerStatus, publicProviderSettings, streamCompletion, testProviderConnection } from "./providers.mjs";
+import { createProviderRuntime, getFactchatAccount, getStoredProviderSecret, listAvailableModels, providerStatus, publicProviderSettings, resolveSessionProvider, streamCompletion, testProviderConnection } from "./providers.mjs";
 import { discordStatus, startDiscordBot } from "./discord.mjs";
 import { notionBlocksToText, notionStatus, queryNotionDataSource, readNotionPage, searchNotion, testNotionConnection } from "./notion.mjs";
 import { APP_VERSION, RELEASE_CHANNEL } from "./app-info.mjs";
@@ -394,7 +394,8 @@ async function generateAssistantReply(session, content, { onDelta = () => {}, ap
     const conversation = [responseFormat, agentInstructions, instruction, workspace, fileTools, memory, goals, notion, modelContext.summaryMessage, ...modelContext.activeMessages].filter(Boolean);
     for (let toolTurns = 0; toolTurns < 6; toolTurns += 1) {
       let candidate = "";
-      for await (const delta of streamCompletion(providerRuntime.get(), conversation, { signal: controller.signal })) candidate += delta;
+      const sessionProvider = resolveSessionProvider(providerRuntime.get(), session);
+      for await (const delta of streamCompletion(sessionProvider, conversation, { signal: controller.signal })) candidate += delta;
       const toolCalls = parseFileToolCalls(candidate);
       if (!toolCalls.length) {
         fullText = candidate;
@@ -698,6 +699,25 @@ async function handle(request, response) {
   if (url.pathname === "/api/sessions" && request.method === "POST") {
     const body = await readJson(request);
     return json(response, 201, store.createSession({ projectId: body.projectId ?? null, title: body.title?.trim() || "새 대화", source: body.source ?? "web" }));
+  }
+  const sessionModelMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/model$/);
+  if (sessionModelMatch && request.method === "GET") {
+    const session = store.getSession(sessionModelMatch[1]);
+    if (!session) return json(response, 404, { error: "Session not found." });
+    const effective = resolveSessionProvider(providerRuntime.get(), session);
+    return json(response, 200, { providerOverride: session.providerOverride, modelOverride: session.modelOverride, effective: providerStatus(effective) });
+  }
+  if (sessionModelMatch && request.method === "PUT") {
+    const body = await readJson(request);
+    const providerOverride = body.providerOverride == null || body.providerOverride === "" ? null : String(body.providerOverride).trim();
+    const modelOverride = body.modelOverride == null || body.modelOverride === "" ? null : String(body.modelOverride).trim();
+    if (providerOverride && providerOverride.length > 80) return json(response, 400, { error: "providerOverride is too long." });
+    if (modelOverride && modelOverride.length > 240) return json(response, 400, { error: "modelOverride is too long." });
+    // Validate before persisting, including keys/configuration inherited from global settings.
+    const effective = resolveSessionProvider(providerRuntime.get(), { providerOverride, modelOverride });
+    const session = store.updateSessionModel(sessionModelMatch[1], { providerOverride, modelOverride });
+    if (!session) return json(response, 404, { error: "Session not found." });
+    return json(response, 200, { providerOverride: session.providerOverride, modelOverride: session.modelOverride, effective: providerStatus(effective) });
   }
   if (url.pathname === "/api/sessions/search" && request.method === "GET") {
     const query = url.searchParams.get("q")?.trim() || "";

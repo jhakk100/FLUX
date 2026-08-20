@@ -21,6 +21,17 @@ test("sessions can be renamed, searched, archived, and restored", async (context
   store.close();
 });
 
+test("a session can keep its own provider and model without changing global settings", async (context) => {
+  const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "flux-session-model-"));
+  context.after(() => fs.rm(dataDirectory, { recursive: true, force: true }));
+  const store = openStore(dataDirectory);
+  const session = store.createSession({ title: "모델 고정", providerOverride: "factchat", modelOverride: "gpt-5-nano" });
+  assert.equal(store.getSession(session.id).modelOverride, "gpt-5-nano");
+  assert.equal(store.updateSessionModel(session.id, { providerOverride: "ollama", modelOverride: "gemma4:e2b" }).providerOverride, "ollama");
+  assert.equal(store.listSessions()[0].modelOverride, "gemma4:e2b");
+  store.close();
+});
+
 test("each FLUX project owns its instructions independently", async (context) => {
   const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "flux-project-instructions-"));
   context.after(() => fs.rm(dataDirectory, { recursive: true, force: true }));

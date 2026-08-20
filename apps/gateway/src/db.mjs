@@ -103,6 +103,12 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
   if (!sessionColumns.some((column) => column.name === "archived_at")) {
     database.exec("ALTER TABLE sessions ADD COLUMN archived_at TEXT");
   }
+  if (!sessionColumns.some((column) => column.name === "provider_override")) {
+    database.exec("ALTER TABLE sessions ADD COLUMN provider_override TEXT");
+  }
+  if (!sessionColumns.some((column) => column.name === "model_override")) {
+    database.exec("ALTER TABLE sessions ADD COLUMN model_override TEXT");
+  }
   const projectColumns = database.prepare("PRAGMA table_info(projects)").all();
   if (!projectColumns.some((column) => column.name === "instructions")) {
     database.exec("ALTER TABLE projects ADD COLUMN instructions TEXT NOT NULL DEFAULT ''");
@@ -139,21 +145,21 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
     return getProject(projectId);
   }
 
-  function createSession({ projectId = null, title = "새 대화", source = "web" }) {
-    const session = { id: id(), projectId, title, source, createdAt: now(), updatedAt: now() };
-    database.prepare("INSERT INTO sessions (id, project_id, title, source, created_at, updated_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .run(session.id, session.projectId, session.title, session.source, session.createdAt, session.updatedAt, null);
+  function createSession({ projectId = null, title = "새 대화", source = "web", providerOverride = null, modelOverride = null }) {
+    const session = { id: id(), projectId, title, source, providerOverride, modelOverride, createdAt: now(), updatedAt: now() };
+    database.prepare("INSERT INTO sessions (id, project_id, title, source, provider_override, model_override, created_at, updated_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(session.id, session.projectId, session.title, session.source, session.providerOverride, session.modelOverride, session.createdAt, session.updatedAt, null);
     audit("session.created", "session", session.id, { projectId, source });
     return session;
   }
 
   function listSessions({ archived = false } = {}) {
-    return database.prepare("SELECT id, project_id AS projectId, title, source, created_at AS createdAt, updated_at AS updatedAt, archived_at AS archivedAt FROM sessions WHERE (archived_at IS NOT NULL) = ? ORDER BY updated_at DESC")
+    return database.prepare("SELECT id, project_id AS projectId, title, source, provider_override AS providerOverride, model_override AS modelOverride, created_at AS createdAt, updated_at AS updatedAt, archived_at AS archivedAt FROM sessions WHERE (archived_at IS NOT NULL) = ? ORDER BY updated_at DESC")
       .all(archived ? 1 : 0);
   }
 
   function getSession(sessionId) {
-    return database.prepare("SELECT id, project_id AS projectId, title, source, created_at AS createdAt, updated_at AS updatedAt, archived_at AS archivedAt FROM sessions WHERE id = ?").get(sessionId);
+    return database.prepare("SELECT id, project_id AS projectId, title, source, provider_override AS providerOverride, model_override AS modelOverride, created_at AS createdAt, updated_at AS updatedAt, archived_at AS archivedAt FROM sessions WHERE id = ?").get(sessionId);
   }
 
   function renameSession(sessionId, title) {
@@ -175,10 +181,20 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
     return getSession(sessionId);
   }
 
+  function updateSessionModel(sessionId, { providerOverride = null, modelOverride = null }) {
+    const session = getSession(sessionId);
+    if (!session) return null;
+    const updatedAt = now();
+    database.prepare("UPDATE sessions SET provider_override = ?, model_override = ?, updated_at = ? WHERE id = ?")
+      .run(providerOverride, modelOverride, updatedAt, sessionId);
+    audit("session.model_updated", "session", sessionId, { providerOverride, modelOverride });
+    return getSession(sessionId);
+  }
+
   function searchSessions(query, { archived = false } = {}) {
     const like = `%${query.replaceAll("%", "\\%").replaceAll("_", "\\_")}%`;
     return database.prepare(`
-      SELECT sessions.id, sessions.project_id AS projectId, sessions.title, sessions.source,
+      SELECT sessions.id, sessions.project_id AS projectId, sessions.title, sessions.source, sessions.provider_override AS providerOverride, sessions.model_override AS modelOverride,
              sessions.created_at AS createdAt, sessions.updated_at AS updatedAt, sessions.archived_at AS archivedAt,
              substr(messages.content, 1, 180) AS matchedContent
       FROM sessions LEFT JOIN messages ON messages.session_id = sessions.id
@@ -343,5 +359,5 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
     audit("setting.updated", "setting", key, { key });
   }
 
-  return { close: () => database.close(), createProject, listProjects, getProject, updateProjectInstructions, createSession, listSessions, getSession, renameSession, archiveSession, searchSessions, addMessage, listMessages, deleteMessage, getOrCreateDiscordSession, getSessionContext, saveSessionContext, listMemories, createMemory, updateMemory, deleteMemory, listGoals, createGoal, updateGoal, deleteGoal, createApproval, listApprovals, getApproval, decideApproval, listAuditEvents, getSetting, setSetting };
+  return { close: () => database.close(), createProject, listProjects, getProject, updateProjectInstructions, createSession, listSessions, getSession, renameSession, archiveSession, updateSessionModel, searchSessions, addMessage, listMessages, deleteMessage, getOrCreateDiscordSession, getSessionContext, saveSessionContext, listMemories, createMemory, updateMemory, deleteMemory, listGoals, createGoal, updateGoal, deleteGoal, createApproval, listApprovals, getApproval, decideApproval, listAuditEvents, getSetting, setSetting };
 }
