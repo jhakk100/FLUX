@@ -34,6 +34,8 @@ flux --help
 flux -chat "안녕"
 flux chat --project "F:\my-project"
 flux status
+flux connect 1 # LLM·모델 API 상태
+flux connect 2 # Discord·Notion 등 부가 서비스 API 상태
 # PATH를 수동으로 등록할 때
 .\dist\Flux.exe --install-cli
 # 개발 환경
