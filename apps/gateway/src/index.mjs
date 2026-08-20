@@ -8,6 +8,7 @@ import { loadConfig } from "./config.mjs";
 import { openStore } from "./db.mjs";
 import { FileApprovalMode, assertSafeWorkspacePath, classifyAction, isFileApprovalMode, redactSecret, requiresInteractiveFileApproval, resolveInsideWorkspace } from "./security.mjs";
 import { projectInstructionMessage } from "./project-instructions.mjs";
+import { executeSlashCommand } from "./slash-commands.mjs";
 import { buildModelContext } from "./context.mjs";
 import { createProviderRuntime, getFactchatAccount, getStoredProviderSecret, listAvailableModels, providerStatus, publicProviderSettings, resolveSessionProvider, streamCompletion, testProviderConnection } from "./providers.mjs";
 import { discordStatus, startDiscordBot } from "./discord.mjs";
@@ -374,6 +375,11 @@ async function generateAssistantReply(session, content, { onDelta = () => {}, ap
   if (session.archivedAt) throw requestError("Archived sessions must be restored before sending a message.", 409);
   if (activeChatControllers.has(session.id)) throw requestError("This session already has an active generation.", 409);
   if (appendUser) store.addMessage({ sessionId: session.id, role: "user", content: content.trim() });
+  const commandResponse = executeSlashCommand({ store, config, providerConfig: providerRuntime.get(), session, content, mutate: appendUser });
+  if (commandResponse) {
+    onDelta(commandResponse);
+    return { message: store.addMessage({ sessionId: session.id, role: "assistant", content: commandResponse }), cancelled: false };
+  }
   const messages = store.listMessages(session.id).filter((message) => message.id !== excludeMessageId);
   const currentContext = store.getSessionContext(session.id);
   const modelContext = buildModelContext(messages, currentContext, config.contextTokenBudget, config.contextCompactThreshold);

@@ -3,6 +3,7 @@ import path from "node:path";
 import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { buildModelContext } from "../../gateway/src/context.mjs";
+import { executeSlashCommand } from "../../gateway/src/slash-commands.mjs";
 import { resolveSessionProvider, streamCompletion, providerStatus } from "../../gateway/src/providers.mjs";
 import { assertSafeWorkspacePath } from "../../gateway/src/security.mjs";
 import { registerFluxCommandManually } from "./command-path.mjs";
@@ -46,6 +47,12 @@ async function getProject(store, projectPath) {
 
 async function sendMessage({ config, store, providerRuntime, session, project, content }) {
   store.addMessage({ sessionId: session.id, role: "user", content });
+  const commandResponse = executeSlashCommand({ store, config, providerConfig: providerRuntime.get(), session, content });
+  if (commandResponse) {
+    output.write(`\nFLUX › ${commandResponse}\n`);
+    store.addMessage({ sessionId: session.id, role: "assistant", content: commandResponse });
+    return;
+  }
   const context = buildModelContext(store.listMessages(session.id), store.getSessionContext(session.id), config.contextTokenBudget, config.contextCompactThreshold);
   if (context.context.changed) store.saveSessionContext(session.id, context.context);
   const projectMessage = project ? { role: "system", content: `This is a FLUX CLI chat attached to project workspace: ${project.workspacePath}. Explain proposed file changes clearly; use the FLUX web interface for approval-gated file operations.` } : null;
