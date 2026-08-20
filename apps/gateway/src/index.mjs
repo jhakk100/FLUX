@@ -51,6 +51,28 @@ function openDashboard(url) {
   execFile(command, args, { windowsHide: true }, () => {});
 }
 
+function gatewayUrl() {
+  const host = config.host.includes(":") ? `[${config.host}]` : config.host;
+  return `http://${host}:${config.port}`;
+}
+
+function findRunningFluxGateway(url) {
+  return new Promise((resolve) => {
+    const request = http.get(`${url}/health`, { timeout: 1_500 }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("end", () => {
+        try {
+          const health = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+          resolve(response.statusCode === 200 && health.ok === true && health.port === config.port);
+        } catch { resolve(false); }
+      });
+    });
+    request.once("timeout", () => request.destroy());
+    request.once("error", () => resolve(false));
+  });
+}
+
 function json(response, status, body) {
   response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
   response.end(JSON.stringify(body));
@@ -845,16 +867,27 @@ if (cliMode) {
   const server = http.createServer((request, response) => {
     handle(request, response).catch((error) => json(response, error.statusCode ?? 500, { error: redactSecret(error.message ?? "Unexpected server error.") }));
   });
-  discordBot = startDiscordBot(config.discord, async ({ channelId, userId, username, content }) => {
-    const session = store.getOrCreateDiscordSession({ channelId, userId, title: `Discord · ${username}` });
-    const result = await generateAssistantReply(session, content);
-    return result.message?.content || (result.cancelled ? "응답 생성을 중지했습니다." : "응답을 만들지 못했습니다.");
+  const url = gatewayUrl();
+  server.once("error", (error) => {
+    void (async () => {
+      if (error.code === "EADDRINUSE" && await findRunningFluxGateway(url)) {
+        console.log(`FLUX Gateway is already running at ${url}; opening the existing WebUI.`);
+        openDashboard(url);
+        process.exit(0);
+      }
+      console.error(`FLUX Gateway could not start at ${url}: ${redactSecret(error.message ?? "unknown error")}`);
+      process.exit(1);
+    })();
   });
   server.listen(config.port, config.host, () => {
-    const gatewayUrl = `http://${config.host}:${config.port}`;
-    console.log(`FLUX Gateway is running at ${gatewayUrl}`);
+    discordBot = startDiscordBot(config.discord, async ({ channelId, userId, username, content }) => {
+      const session = store.getOrCreateDiscordSession({ channelId, userId, title: `Discord · ${username}` });
+      const result = await generateAssistantReply(session, content);
+      return result.message?.content || (result.cancelled ? "응답 생성을 중지했습니다." : "응답을 만들지 못했습니다.");
+    });
+    console.log(`FLUX Gateway is running at ${url}`);
     console.log(`Provider: ${providerStatus(providerRuntime.get()).provider}`);
     console.log(`Discord: ${discordStatus(config.discord).enabled ? "configured" : "disabled"}`);
-    openDashboard(gatewayUrl);
+    openDashboard(url);
   });
 }
