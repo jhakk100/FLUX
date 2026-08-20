@@ -1,6 +1,6 @@
 {
   "name": "flux",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.19.0",
@@ -21,7 +21,6 @@
   },
   "devDependencies": {
     "esbuild": "^0.28.2",
-    "postject": "1.0.0-alpha.6",
-    "rcedit": "5.0.2"
+    "postject": "1.0.0-alpha.6"
   }
 }
