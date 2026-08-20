@@ -34,8 +34,9 @@ flux --help
 flux -chat "안녕"
 flux chat --project "F:\my-project"
 flux status
-flux api 1     # LLM·모델 API 상태
-flux api 2     # Discord·Notion 등 부가 서비스 API 상태
+flux api models    # 선택된 LLM API의 사용 가능한 모델 조회
+flux api refresh   # 모델 목록을 API에서 강제로 다시 조회
+flux api services  # Discord·Notion 등 부가 서비스 API 상태
 # PATH를 수동으로 등록할 때
 .\dist\Flux.exe --install-cli
 # 개발 환경

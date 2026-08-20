@@ -4,7 +4,7 @@ import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { buildModelContext } from "../../gateway/src/context.mjs";
 import { executeSlashCommand } from "../../gateway/src/slash-commands.mjs";
-import { resolveSessionProvider, streamCompletion, providerStatus } from "../../gateway/src/providers.mjs";
+import { listAvailableModels, resolveSessionProvider, streamCompletion, providerStatus } from "../../gateway/src/providers.mjs";
 import { assertSafeWorkspacePath } from "../../gateway/src/security.mjs";
 import { registerFluxCommandManually } from "./command-path.mjs";
 import { APP_VERSION } from "../../gateway/src/app-info.mjs";
@@ -14,23 +14,34 @@ const RESET = "\x1b[0m";
 const BANNER = ["███████╗██╗   ██╗", "██╔════╝██║   ██║", "█████╗  ██║   ██║", "██╔══╝  ██║   ██║", "██║     ╚██████╔╝", "╚═╝      ╚═════╝ ", "  local AI orchestrator"].join("\n");
 
 function printBanner() { console.log(`${RED}${BANNER}${RESET}`); }
-function usage() { console.log("\nFLUX CLI 사용법:\n  flux --help | -help\n  flux -chat \"질문\" [--project C:\\path\\to\\project] [--provider ollama] [--model 모델ID]\n  flux chat --message \"질문\" [--project C:\\path\\to\\project]\n  flux chat                         # 대화형 모드\n  flux status                       # 현재 공급자 확인\n  flux api [1|2]                    # 1: LLM·모델 API, 2: 부가 서비스 API\n  flux install                      # PATH 등록을 다시 수행\n\n--provider/--model은 만든 CLI 대화에만 적용됩니다. 최초 GUI 실행 시 사용자 PATH에 flux 명령이 자동 등록됩니다. 새 터미널을 열어 사용하세요. 대화 중 /exit 또는 /quit을 입력하면 종료합니다."); }
+function usage() { console.log("\nFLUX CLI 사용법:\n  flux --help | -help\n  flux -chat \"질문\" [--project C:\\path\\to\\project] [--provider ollama] [--model 모델ID]\n  flux chat --message \"질문\" [--project C:\\path\\to\\project]\n  flux chat                         # 대화형 모드\n  flux status                       # 현재 공급자 확인\n  flux api models                   # 선택된 LLM API의 사용 가능한 모델 조회\n  flux api refresh                  # 모델 목록을 API에서 강제로 다시 조회\n  flux api services                 # Discord·Notion 등 부가 서비스 상태\n  flux install                      # PATH 등록을 다시 수행\n\n--provider/--model은 만든 CLI 대화에만 적용됩니다. 최초 GUI 실행 시 사용자 PATH에 flux 명령이 자동 등록됩니다. 새 터미널을 열어 사용하세요. 대화 중 /exit 또는 /quit을 입력하면 종료합니다."); }
 
 export function connectionReport(config, providerConfig, group) {
-  if (group === "1") {
-    const providers = ["ollama", "lm-studio", "google-ai", "openai-compatible", "openai-chat-compatible", "factchat", "factchat-responses"];
-    const lines = providers.map((provider) => {
-      const status = providerStatus(resolveSessionProvider(providerConfig, { providerOverride: provider }));
-      return `${status.configured ? "●" : "○"} ${provider}${status.model ? ` · ${status.model}` : ""}${status.configured ? " · 준비됨" : " · 설정 필요"}`;
-    });
-    return ["[1] LLM·모델 API", ...lines, "", "API 키·주소·모델은 WebUI의 설정 → AI API 설정에서 관리합니다. 키는 이 PC에만 저장됩니다."].join("\n");
-  }
-  if (group === "2") {
+  if (group === "services") {
     const discordReady = Boolean(config.discord.token && config.discord.allowedUserIds.length);
     const notionReady = Boolean(config.notion.apiKey);
-    return ["[2] 부가 서비스 API", `${discordReady ? "●" : "○"} Discord · ${discordReady ? "준비됨" : "토큰 또는 허용 사용자 설정 필요"}`, `${notionReady ? "●" : "○"} Notion 읽기 연결 · ${notionReady ? "준비됨" : "API 키 설정 필요"}`, "", "부가 서비스 토큰은 .env 또는 FLUX 환경 변수로 설정합니다. 채팅용 LLM API와 분리되어 있습니다."].join("\n");
+    return ["[services] 부가 서비스 API", `${discordReady ? "●" : "○"} Discord · ${discordReady ? "준비됨" : "토큰 또는 허용 사용자 설정 필요"}`, `${notionReady ? "●" : "○"} Notion 읽기 연결 · ${notionReady ? "준비됨" : "API 키 설정 필요"}`, "", "부가 서비스 토큰은 .env 또는 FLUX 환경 변수로 설정합니다. 채팅용 LLM API와 분리되어 있습니다."].join("\n");
   }
-  return "API 종류를 선택하세요.\n  1) LLM·모델 API\n  2) 부가 서비스 API\n\n예: flux api 1";
+  return "API 종류를 선택하세요.\n  models   선택된 LLM API에서 사용 가능한 모델 조회\n  refresh  모델 목록을 API에서 강제로 다시 조회\n  services Discord·Notion 등 부가 서비스 상태\n\n예: flux api models";
+}
+
+function tokenLimit(label, value) {
+  return Number.isFinite(value) && value > 0 ? ` · ${label} ${value.toLocaleString()}` : "";
+}
+
+export function modelListReport(provider, result) {
+  const models = result.models ?? [];
+  const lines = models.map((model) => {
+    const title = model.name && model.name !== model.id ? `${model.name} (${model.id})` : model.id;
+    const tokens = `${tokenLimit("입력", model.inputTokenLimit)}${tokenLimit("출력", model.outputTokenLimit)}`;
+    const capabilities = model.capabilities?.filter((capability) => capability !== model.owner) ?? [];
+    const capabilityText = capabilities.length ? ` · ${capabilities.join(", ")}` : "";
+    return `• ${title}${model.owner ? ` · ${model.owner}` : ""}${tokens}${capabilityText}`;
+  });
+  const usage = result.usage
+    ? `\n\n사용량: 월 할당 ${result.usage.monthlyAllocated ?? "알 수 없음"} · 구매 ${result.usage.purchased ?? "알 수 없음"} · 합계 ${result.usage.total ?? "알 수 없음"}`
+    : "";
+  return [`[models] ${provider} · ${models.length}개`, ...(lines.length ? lines : ["조회된 모델이 없습니다."]), usage].filter(Boolean).join("\n");
 }
 
 function parseArguments(argv) {
@@ -106,13 +117,27 @@ export async function runCli({ config, store, providerRuntime, argv = process.ar
     return;
   }
   if (options.command === "api") {
-    let group = options.message.trim();
+    const apiArguments = options.message.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    let group = apiArguments[0] ?? "";
     if (!group && input.isTTY) {
       const terminal = readline.createInterface({ input, output });
-      try { group = (await terminal.question("API 종류 선택 (1: LLM·모델 API, 2: 부가 서비스 API): ")).trim(); } finally { terminal.close(); }
+      try { group = (await terminal.question("API 종류 선택 (models: 모델 조회, refresh: 강제 새로고침, services: 부가 서비스): ")).trim().toLowerCase(); } finally { terminal.close(); }
+    }
+    const refreshed = group === "refresh" || (group === "models" && apiArguments.includes("refresh"));
+    if (group === "refresh") group = "models";
+    if (group === "models") {
+      const activeProvider = providerRuntime.get();
+      try {
+        if (refreshed) console.log("모델 목록을 새로고침합니다...");
+        console.log(modelListReport(activeProvider.provider, await listAvailableModels(activeProvider)));
+      } catch (error) {
+        console.error(`모델 목록을 조회하지 못했습니다: ${error.message}`);
+        process.exitCode = 1;
+      }
+      return;
     }
     console.log(connectionReport(config, providerRuntime.get(), group));
-    if (group && !["1", "2"].includes(group)) process.exitCode = 2;
+    if (group && group !== "services") process.exitCode = 2;
     return;
   }
   if (options.command !== "chat") {
