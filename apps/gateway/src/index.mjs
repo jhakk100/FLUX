@@ -9,6 +9,7 @@ import { openStore } from "./db.mjs";
 import { FileApprovalMode, assertSafeWorkspacePath, classifyAction, isFileApprovalMode, redactSecret, requiresInteractiveFileApproval, resolveInsideWorkspace } from "./security.mjs";
 import { projectInstructionMessage } from "./project-instructions.mjs";
 import { executeSlashCommand } from "./slash-commands.mjs";
+import { applyUniqueTextPatch } from "./text-patch.mjs";
 import { buildModelContext } from "./context.mjs";
 import { createProviderRuntime, getFactchatAccount, getStoredProviderSecret, listAvailableModels, providerStatus, publicProviderSettings, resolveSessionProvider, streamCompletion, testProviderConnection } from "./providers.mjs";
 import { discordStatus, startDiscordBot } from "./discord.mjs";
@@ -225,7 +226,7 @@ function fileAgentToolsMessage(project) {
     content: [
       "FLUX file tools are available only for this project's workspace. Use them only when the user asks to inspect or change project files.",
       "For each tool call, use a <flux-tool>{JSON}</flux-tool> block. Prefer no prose; FLUX also accepts an omitted closing tag from smaller local models. You may return up to 12 independent blocks for a batch of file changes.",
-      "JSON schemas: {\"action\":\"list-files\",\"path\":\"relative/folder\"}; {\"action\":\"read-file\",\"path\":\"relative/file\"}; {\"action\":\"search-files\",\"query\":\"two or more characters\"}; {\"action\":\"create-file\"|\"modify-file\"|\"delete-file\",\"path\":\"relative/file\",\"content\":\"required except delete\"}.",
+      "JSON schemas: {\"action\":\"list-files\",\"path\":\"relative/folder\"}; {\"action\":\"read-file\",\"path\":\"relative/file\"}; {\"action\":\"search-files\",\"query\":\"two or more characters\"}; {\"action\":\"create-file\"|\"modify-file\"|\"delete-file\",\"path\":\"relative/file\",\"content\":\"required except delete\"}; {\"action\":\"patch-file\",\"path\":\"relative/file\",\"find\":\"exact existing text\",\"replace\":\"new text\"}. Prefer patch-file for a focused code edit; its find text must occur exactly once.",
       "Never use absolute paths, .., symlinks, or operating-system paths. File changes are constrained to this workspace and governed by FLUX approval policy; say what you changed after tool results arrive.",
     ].join("\n"),
   };
@@ -288,7 +289,7 @@ async function createFileChangeRequest({ project, action, relativePath, content,
 
 async function runFileTool(project, call) {
   if (!project) throw requestError("A FLUX project is required for file tools.");
-  if (!['list-files', 'read-file', 'search-files', 'create-file', 'modify-file', 'delete-file'].includes(call.action)) throw requestError("Unsupported FLUX file tool.");
+  if (!['list-files', 'read-file', 'search-files', 'create-file', 'modify-file', 'delete-file', 'patch-file'].includes(call.action)) throw requestError("Unsupported FLUX file tool.");
   if (call.action === "list-files") {
     const directory = await resolveExistingWorkspacePath(project, call.path || ".");
     const metadata = await fs.lstat(directory);
@@ -305,6 +306,15 @@ async function runFileTool(project, call) {
     if (typeof call.query !== "string" || call.query.trim().length < 2) throw requestError("Search queries must contain at least two characters.");
     const root = await fs.realpath(project.workspacePath);
     return searchWorkspace(root, root, call.query.trim());
+  }
+  if (call.action === "patch-file") {
+    const target = await resolveExistingWorkspacePath(project, call.path);
+    const current = await readTextFile(target);
+    let content;
+    try { content = applyUniqueTextPatch(current.content, call.find, call.replace); } catch (error) { throw requestError(error.message); }
+    if (Buffer.byteLength(content, "utf8") > MAX_WRITE_BYTES) throw requestError("Patched file content must be at most 1 MiB.", 413);
+    const change = await createFileChangeRequest({ project, action: "modify-file", relativePath: call.path, content, origin: "assistant-patch" });
+    return { action: "modify-file", patch: true, path: call.path, automated: change.automated, approvalId: change.approval.id, status: change.automated ? "applied" : "awaiting-user-approval" };
   }
   const change = await createFileChangeRequest({ project, action: call.action, relativePath: call.path, content: call.content, origin: "assistant" });
   return { action: call.action, path: call.path, automated: change.automated, approvalId: change.approval.id, status: change.automated ? "applied" : "awaiting-user-approval" };
