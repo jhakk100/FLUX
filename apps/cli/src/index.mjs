@@ -11,7 +11,7 @@ import { APP_VERSION } from "../../gateway/src/app-info.mjs";
 
 const RED = "\x1b[31m";
 const RESET = "\x1b[0m";
-const BANNER = ["███████╗██╗   ██╗", "██╔════╝██║   ██║", "█████╗  ██║   ██║", "██╔══╝  ██║   ██║", "██║     ╚██████╔╝", "╚═╝      ╚═════╝ ", "  local AI orchestrator"].join("\n");
+const BANNER = ["███████╗██╗   ██╗", "██╔════╝██║   ██║", "█████╗  ██║   ██║", "██╔══╝  ██║   ██║", "██║     ╚██████╔╝", "╚═╝      ╚═════╝ ", "  ╰─[ Fixing Lousy User eXperience ]─╯"].join("\n");
 
 function printBanner() { console.log(`${RED}${BANNER}${RESET}`); }
 function usage() { console.log("\nFLUX CLI 사용법:\n  flux --help | -help\n  flux -chat \"질문\" [--project C:\\path\\to\\project] [--provider ollama] [--model 모델ID]\n  flux chat --message \"질문\" [--project C:\\path\\to\\project]\n  flux chat                         # 대화형 모드\n  flux status                       # 현재 공급자 확인\n  flux api models                   # 선택된 LLM API의 사용 가능한 모델 조회\n  flux api refresh                  # 모델 목록을 API에서 강제로 다시 조회\n  flux api services                 # Discord·Notion 등 부가 서비스 상태\n  flux install                      # PATH 등록을 다시 수행\n\n--provider/--model은 만든 CLI 대화에만 적용됩니다. 최초 GUI 실행 시 사용자 PATH에 flux 명령이 자동 등록됩니다. 새 터미널을 열어 사용하세요. 대화 중 /exit 또는 /quit을 입력하면 종료합니다."); }
