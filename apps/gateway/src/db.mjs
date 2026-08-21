@@ -45,6 +45,17 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
       content TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS attachments (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      message_id TEXT REFERENCES messages(id) ON DELETE CASCADE,
+      file_name TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      byte_size INTEGER NOT NULL,
+      storage_path TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS attachments_session_message_idx ON attachments (session_id, message_id, created_at);
     CREATE TABLE IF NOT EXISTS approvals (
       id TEXT PRIMARY KEY,
       action TEXT NOT NULL,
@@ -215,7 +226,46 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
   }
 
   function listMessages(sessionId) {
-    return database.prepare("SELECT id, session_id AS sessionId, role, content, created_at AS createdAt FROM messages WHERE session_id = ? ORDER BY created_at ASC").all(sessionId);
+    const messages = database.prepare("SELECT id, session_id AS sessionId, role, content, created_at AS createdAt FROM messages WHERE session_id = ? ORDER BY created_at ASC").all(sessionId);
+    const attachments = database.prepare("SELECT id, session_id AS sessionId, message_id AS messageId, file_name AS fileName, mime_type AS mimeType, byte_size AS byteSize, storage_path AS storagePath, created_at AS createdAt FROM attachments WHERE session_id = ? AND message_id IS NOT NULL ORDER BY created_at ASC").all(sessionId);
+    const byMessage = new Map();
+    for (const attachment of attachments) {
+      const items = byMessage.get(attachment.messageId) ?? [];
+      items.push(attachment);
+      byMessage.set(attachment.messageId, items);
+    }
+    return messages.map((message) => ({ ...message, attachments: byMessage.get(message.id) ?? [] }));
+  }
+
+  function createPendingAttachment({ sessionId, fileName, mimeType, byteSize, storagePath }) {
+    const attachment = { id: id(), sessionId, messageId: null, fileName, mimeType, byteSize, storagePath, createdAt: now() };
+    database.prepare("INSERT INTO attachments (id, session_id, message_id, file_name, mime_type, byte_size, storage_path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(attachment.id, attachment.sessionId, null, attachment.fileName, attachment.mimeType, attachment.byteSize, attachment.storagePath, attachment.createdAt);
+    audit("attachment.uploaded", "attachment", attachment.id, { sessionId, fileName, mimeType, byteSize });
+    return attachment;
+  }
+
+  function getAttachment(attachmentId) {
+    return database.prepare("SELECT id, session_id AS sessionId, message_id AS messageId, file_name AS fileName, mime_type AS mimeType, byte_size AS byteSize, storage_path AS storagePath, created_at AS createdAt FROM attachments WHERE id = ?").get(attachmentId) ?? null;
+  }
+
+  function attachPendingAttachments({ sessionId, messageId, attachmentIds = [] }) {
+    const ids = [...new Set(attachmentIds)];
+    for (const attachmentId of ids) {
+      const attachment = getAttachment(attachmentId);
+      if (!attachment || attachment.sessionId !== sessionId || attachment.messageId) throw new Error("Attachment is missing or already attached.");
+    }
+    for (const attachmentId of ids) database.prepare("UPDATE attachments SET message_id = ? WHERE id = ?").run(messageId, attachmentId);
+    if (ids.length) audit("attachment.attached", "message", messageId, { sessionId, attachmentIds: ids });
+    return ids.map(getAttachment);
+  }
+
+  function deletePendingAttachment(attachmentId) {
+    const attachment = getAttachment(attachmentId);
+    if (!attachment || attachment.messageId) return null;
+    database.prepare("DELETE FROM attachments WHERE id = ?").run(attachmentId);
+    audit("attachment.deleted", "attachment", attachmentId, { sessionId: attachment.sessionId, reason: "cancelled" });
+    return attachment;
   }
 
   function deleteMessage(messageId) {
@@ -359,5 +409,5 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
     audit("setting.updated", "setting", key, { key });
   }
 
-  return { close: () => database.close(), createProject, listProjects, getProject, updateProjectInstructions, createSession, listSessions, getSession, renameSession, archiveSession, updateSessionModel, searchSessions, addMessage, listMessages, deleteMessage, getOrCreateDiscordSession, getSessionContext, saveSessionContext, listMemories, createMemory, updateMemory, deleteMemory, listGoals, createGoal, updateGoal, deleteGoal, createApproval, listApprovals, getApproval, decideApproval, listAuditEvents, getSetting, setSetting };
+  return { close: () => database.close(), createProject, listProjects, getProject, updateProjectInstructions, createSession, listSessions, getSession, renameSession, archiveSession, updateSessionModel, searchSessions, addMessage, listMessages, createPendingAttachment, getAttachment, attachPendingAttachments, deletePendingAttachment, deleteMessage, getOrCreateDiscordSession, getSessionContext, saveSessionContext, listMemories, createMemory, updateMemory, deleteMemory, listGoals, createGoal, updateGoal, deleteGoal, createApproval, listApprovals, getApproval, decideApproval, listAuditEvents, getSetting, setSetting };
 }

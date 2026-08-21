@@ -2,6 +2,39 @@ function asConversation(messages) {
   return messages.map((message) => ({ role: message.role === "assistant" ? "assistant" : message.role === "system" ? "system" : "user", content: message.content }));
 }
 
+function imageAttachments(message) {
+  return (message.modelAttachments ?? []).filter((attachment) => attachment?.mimeType?.startsWith("image/") && attachment.data);
+}
+
+function ollamaConversation(messages) {
+  return asConversation(messages).map((message, index) => {
+    const images = imageAttachments(messages[index]).map((attachment) => attachment.data);
+    return images.length ? { ...message, images } : message;
+  });
+}
+
+function chatVisionConversation(messages) {
+  return asConversation(messages).map((message, index) => {
+    const images = imageAttachments(messages[index]);
+    if (!images.length || message.role === "system") return message;
+    return {
+      ...message,
+      content: [{ type: "text", text: message.content }, ...images.map((attachment) => ({ type: "image_url", image_url: { url: `data:${attachment.mimeType};base64,${attachment.data}` } }))],
+    };
+  });
+}
+
+function responsesConversation(messages) {
+  return asConversation(messages).map((message, index) => {
+    const images = imageAttachments(messages[index]);
+    if (!images.length || message.role === "system") return message;
+    return {
+      ...message,
+      content: [{ type: "input_text", text: message.content }, ...images.map((attachment) => ({ type: "input_image", image_url: `data:${attachment.mimeType};base64,${attachment.data}` }))],
+    };
+  });
+}
+
 const PROVIDERS = new Set(["demo", "ollama", "lm-studio", "openai-compatible", "openai-chat-compatible", "factchat", "factchat-responses", "google-ai"]);
 
 export function resolveSessionProvider(config, { providerOverride = null, modelOverride = null } = {}) {
@@ -116,7 +149,7 @@ async function* ollamaStream(config, messages, signal) {
   const response = await fetch(`${config.ollama.baseUrl}/api/chat`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ model: config.ollama.model, messages: asConversation(messages), stream: true, ...(config.ollama.contextLength ? { options: { num_ctx: config.ollama.contextLength } } : {}) }),
+    body: JSON.stringify({ model: config.ollama.model, messages: ollamaConversation(messages), stream: true, ...(config.ollama.contextLength ? { options: { num_ctx: config.ollama.contextLength } } : {}) }),
     signal: requestSignal(signal),
   });
   if (!response.ok || !response.body) throw new Error(`Ollama returned ${response.status}: ${await response.text()}`);
@@ -152,7 +185,7 @@ async function* openAiCompatibleStream(config, messages, signal) {
       model: config.openai.model,
       stream: true,
       store: false,
-      input: asConversation(messages),
+      input: responsesConversation(messages),
     }),
     signal: requestSignal(signal),
   });
@@ -187,7 +220,7 @@ async function* chatCompatibleStream(connection, messages, signal, { name, apiKe
   const response = await fetch(`${connection.baseUrl}/chat/completions`, {
     method: "POST",
     headers: { ...(connection.apiKey ? { authorization: `Bearer ${connection.apiKey}` } : {}), "content-type": "application/json" },
-    body: JSON.stringify({ model: connection.model, stream: true, messages: asConversation(messages) }),
+    body: JSON.stringify({ model: connection.model, stream: true, messages: chatVisionConversation(messages) }),
     signal: requestSignal(signal),
   });
   if (!response.ok || !response.body) throw new Error(`${name} returned ${response.status}: ${await response.text()}`);
@@ -237,7 +270,10 @@ async function* factchatResponsesStream(config, messages, signal) {
 
 function geminiPayload(messages) {
   const systemInstruction = messages.filter((message) => message.role === "system").map((message) => message.content).join("\n\n");
-  const contents = messages.filter((message) => message.role !== "system").map((message) => ({ role: message.role === "assistant" ? "model" : "user", parts: [{ text: message.content }] }));
+  const contents = messages.filter((message) => message.role !== "system").map((message) => ({
+    role: message.role === "assistant" ? "model" : "user",
+    parts: [{ text: message.content }, ...imageAttachments(message).map((attachment) => ({ inline_data: { mime_type: attachment.mimeType, data: attachment.data } }))],
+  }));
   return { ...(systemInstruction ? { system_instruction: { parts: [{ text: systemInstruction }] } } : {}), contents };
 }
 
