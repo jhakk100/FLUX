@@ -94,3 +94,7 @@ FLUX는 기본적으로 추정 24,000 토큰의 75%에서 오래된 대화를 �
 Discord 봇 연결은 [Discord 연결 안내](./docs/DISCORD_SETUP.md)를 참고하세요.
 
 Notion 연결은 [Notion 읽기 연결 안내](./docs/NOTION_SETUP.md)를 참고하세요.
+
+## 알려진 문제
+
+현재 확인된 제한·외부 서비스 문제·우회 방법은 [알려진 문제](./docs/KNOWN_ISSUES.md)에 기록합니다.
