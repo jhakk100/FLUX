@@ -114,3 +114,8 @@ test("Google AI stream keeps final consecutive SSE data records", async () => {
     globalThis.fetch = originalFetch;
   }
 });
+test("provider streams ignore an absent optional system message", async () => {
+  let text = "";
+  for await (const delta of streamCompletion(baseConfig, [null, { role: "user", content: "hello" }])) text += delta;
+  assert.match(text, /hello/);
+});

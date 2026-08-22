@@ -1,9 +1,9 @@
 function asConversation(messages) {
-  return messages.map((message) => ({ role: message.role === "assistant" ? "assistant" : message.role === "system" ? "system" : "user", content: message.content }));
+  return messages.filter(Boolean).map((message) => ({ role: message.role === "assistant" ? "assistant" : message.role === "system" ? "system" : "user", content: message.content }));
 }
 
 function imageAttachments(message) {
-  return (message.modelAttachments ?? []).filter((attachment) => attachment?.mimeType?.startsWith("image/") && attachment.data);
+  return (message?.modelAttachments ?? []).filter((attachment) => attachment?.mimeType?.startsWith("image/") && attachment.data);
 }
 
 function hasImageAttachments(messages) {
@@ -212,7 +212,7 @@ async function* ollamaStream(config, messages, signal) {
   }
 }
 
-async function* openAiCompatibleStream(config, messages, signal) {
+async function* openAiCompatibleStream(config, safeMessages, signal) {
   if (!config.openai.apiKey) throw new Error("FLUX_OPENAI_API_KEY is required for the OpenAI-compatible provider.");
   if (!config.openai.model) throw new Error("FLUX_OPENAI_MODEL is required for the OpenAI-compatible provider.");
   const response = await fetch(`${config.openai.baseUrl}/responses`, {
@@ -284,7 +284,7 @@ async function* chatCompatibleStream(connection, messages, signal, { name, apiKe
   }
 }
 
-async function* openAiChatCompatibleStream(config, messages, signal) {
+async function* openAiChatCompatibleStream(config, safeMessages, signal) {
   yield* chatCompatibleStream(config.openai, messages, signal, { name: "Model provider", apiKeyRequired: true });
 }
 
@@ -292,7 +292,7 @@ async function* lmStudioStream(config, messages, signal) {
   yield* chatCompatibleStream(config.lmstudio, messages, signal, { name: "LM Studio", apiKeyRequired: false });
 }
 
-async function* factchatStream(config, messages, signal) {
+async function* factchatStream(config, safeMessages, signal) {
   if (!config.factchat.apiKey || !config.factchat.model) throw new Error("FactChat API 키와 모델 이름을 입력하세요.");
   const response = await fetch(`${config.factchat.baseUrl}/chat/completions/`, { method: "POST", headers: { authorization: `Bearer ${config.factchat.apiKey}`, "content-type": "application/json" }, body: JSON.stringify({ model: config.factchat.model, stream: true, messages: chatVisionConversation(messages) }), signal: requestSignal(signal) });
   if (!response.ok || !response.body) throw new Error(`FactChat returned ${response.status}: ${await response.text()}`);
@@ -300,7 +300,7 @@ async function* factchatStream(config, messages, signal) {
   while (true) { const { done, value } = await reader.read(); buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done }); const events = buffer.split("\n\n"); buffer = events.pop() ?? ""; for (const rawEvent of events) { const data = rawEvent.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n"); if (!data || data === "[DONE]") continue; const event = JSON.parse(data); if (event.error) throw new Error(event.error.message ?? "FactChat returned an error."); if (event.choices?.[0]?.delta?.content) yield event.choices[0].delta.content; } if (done) break; }
 }
 
-async function* factchatResponsesStream(config, messages, signal) {
+async function* factchatResponsesStream(config, safeMessages, signal) {
   if (!config.factchat.apiKey || !config.factchat.model) throw new Error("FactChat API 키와 Codex 모델 이름을 입력하세요.");
   const response = await fetch(`${config.factchat.baseUrl}/responses/`, { method: "POST", headers: { authorization: `Bearer ${config.factchat.apiKey}`, "content-type": "application/json" }, body: JSON.stringify({ model: config.factchat.model, stream: true, input: responsesConversation(messages) }), signal: requestSignal(signal) });
   if (!response.ok || !response.body) throw new Error(`FactChat Responses returned ${response.status}: ${await response.text()}`);
@@ -351,14 +351,15 @@ async function* googleAiStream(config, messages, signal) {
   }
 }
 export function streamCompletion(config, messages, { signal } = {}) {
-  if (config.provider === "ollama") return ollamaStream(config, messages, signal);
-  if (config.provider === "lm-studio") return lmStudioStream(config, messages, signal);
-  if (config.provider === "openai-compatible") return openAiCompatibleStream(config, messages, signal);
-  if (config.provider === "openai-chat-compatible") return openAiChatCompatibleStream(config, messages, signal);
-  if (config.provider === "factchat") return factchatStream(config, messages, signal);
-  if (config.provider === "factchat-responses") return factchatResponsesStream(config, messages, signal);
-  if (config.provider === "google-ai") return googleAiStream(config, messages, signal);
-  return demoStream(messages, signal);
+  const safeMessages = messages.filter(Boolean);
+  if (config.provider === "ollama") return ollamaStream(config, safeMessages, signal);
+  if (config.provider === "lm-studio") return lmStudioStream(config, safeMessages, signal);
+  if (config.provider === "openai-compatible") return openAiCompatibleStream(config, safeMessages, signal);
+  if (config.provider === "openai-chat-compatible") return openAiChatCompatibleStream(config, safeMessages, signal);
+  if (config.provider === "factchat") return factchatStream(config, safeMessages, signal);
+  if (config.provider === "factchat-responses") return factchatResponsesStream(config, safeMessages, signal);
+  if (config.provider === "google-ai") return googleAiStream(config, safeMessages, signal);
+  return demoStream(safeMessages, signal);
 }
 
 export function providerStatus(config) {

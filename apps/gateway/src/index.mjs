@@ -493,7 +493,7 @@ async function collectProjectChildReports({ project, content, controller }) {
       sessionRoleMessage(child),
       ...history,
       { role: "user", content: `[Project leader assignment]\n${content}` },
-    ];
+    ].filter(Boolean);
     let report = "";
     for await (const delta of streamCompletion(resolveSessionProvider(providerRuntime.get(), child), messages, { signal: controller.signal })) report += delta;
     if (!report.trim()) throw new Error("empty response");
