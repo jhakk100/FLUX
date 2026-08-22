@@ -82,7 +82,7 @@ try {
   run(process.execPath, [postjectCli, executable, "NODE_SEA_BLOB", blob, "--sentinel-fuse", fuse]);
   run(process.execPath, [iconGenerator, icon]);
   // Apply the generated ICO through Win32 resources directly: no background Node wrapper.
-  run("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", iconApplier, executable, icon], { timeoutMs: 15_000 });
+  run("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", iconApplier, executable, icon], { timeoutMs: 120_000 });
   copyFileSync(path.join(root, ".env.example"), path.join(dist, ".env.example"));
   writeFileSync(path.join(dist, "README.txt"), [
     "FLUX 실행 파일",
