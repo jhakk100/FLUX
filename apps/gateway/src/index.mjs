@@ -554,6 +554,52 @@ async function searchWorkspace(directory, root, query) {
   return { results, scanned, truncated: results.length >= MAX_SEARCH_RESULTS || scanned >= MAX_SEARCH_ENTRIES };
 }
 
+async function stalePendingApprovalReason(approval) {
+  if (!["create-file", "modify-file", "delete-file"].includes(approval.action)) return null;
+  const payload = approval.payload;
+  const project = store.getProject(payload.projectId);
+  if (!project) return "The FLUX project for this request no longer exists.";
+  try {
+    await fs.realpath(project.workspacePath);
+  } catch {
+    // A disconnected network drive should not silently discard a user's request.
+    return null;
+  }
+  let target;
+  try {
+    target = approval.action === "create-file"
+      ? await resolveNewWorkspacePath(project, payload.relativePath)
+      : await resolveExistingWorkspacePath(project, payload.relativePath);
+  } catch {
+    return "The requested file no longer exists or is no longer inside its project workspace.";
+  }
+  if (approval.action === "create-file") {
+    try {
+      await fs.lstat(target);
+      return "The requested new-file target now already exists.";
+    } catch (error) {
+      return error.code === "ENOENT" ? null : "The requested new-file target can no longer be verified.";
+    }
+  }
+  try {
+    const current = await readTextFile(target);
+    if (contentHash(current.content) !== payload.expectedHash) return "The file changed after this request was created.";
+  } catch {
+    return "The requested file can no longer be read safely.";
+  }
+  return null;
+}
+
+async function reconcilePendingApprovals() {
+  const pending = store.listApprovals().filter((approval) => approval.status === "pending");
+  for (const summary of pending) {
+    const approval = store.getApproval(summary.id);
+    if (!approval) continue;
+    const reason = await stalePendingApprovalReason(approval);
+    if (reason) store.expireApproval(approval.id, reason);
+  }
+}
+
 async function executeApprovedAction(approval, confirmationTarget) {
   if (approval.risk === "R3" && confirmationTarget !== approval.target) {
     const error = new Error("Destructive actions require an exact target confirmation.");
@@ -644,6 +690,7 @@ async function handle(request, response) {
 
   if (url.pathname === "/api/overview" && request.method === "GET") {
     await cliRegistrationReady;
+    await reconcilePendingApprovals();
     return json(response, 200, { app: { version: APP_VERSION, channel: RELEASE_CHANNEL }, cli: cliRegistration, provider: providerStatus(providerRuntime.get()), discord: discordBot.status(), notion: notionStatus(config.notion), projects: store.listProjects(), sessions: store.listSessions(), approvals: store.listApprovals(), audit: store.listAuditEvents(30) });
   }
   if (url.pathname === "/api/discord/status" && request.method === "GET") return json(response, 200, discordBot.status());
@@ -935,7 +982,7 @@ async function handle(request, response) {
     }
     return response.end();
   }
-  if (url.pathname === "/api/approvals" && request.method === "GET") return json(response, 200, store.listApprovals());
+  if (url.pathname === "/api/approvals" && request.method === "GET") { await reconcilePendingApprovals(); return json(response, 200, store.listApprovals()); }
   const approvalMatch = url.pathname.match(/^\/api\/approvals\/([^/]+)\/decision$/);
   if (approvalMatch && request.method === "POST") {
     const body = await readJson(request);
@@ -948,6 +995,11 @@ async function handle(request, response) {
     const pendingApproval = store.getApproval(approvalMatch[1]);
     if (!pendingApproval) return json(response, 404, { error: "Approval not found." });
     if (pendingApproval.status !== "pending") throw requestError("This approval was already decided.", 409);
+    const staleReason = await stalePendingApprovalReason(pendingApproval);
+    if (staleReason) {
+      store.expireApproval(pendingApproval.id, staleReason);
+      return json(response, 409, { error: `This approval expired: ${staleReason}` });
+    }
     // Mark an approval as completed only after the guarded side effect succeeds.
     const result = await executeApprovedAction(pendingApproval, body.confirmTarget);
     const approval = store.decideApproval(pendingApproval.id, "approved");

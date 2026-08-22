@@ -6,6 +6,10 @@ function imageAttachments(message) {
   return (message.modelAttachments ?? []).filter((attachment) => attachment?.mimeType?.startsWith("image/") && attachment.data);
 }
 
+function hasImageAttachments(messages) {
+  return messages.some((message) => imageAttachments(message).length > 0);
+}
+
 function ollamaConversation(messages) {
   return asConversation(messages).map((message, index) => {
     const images = imageAttachments(messages[index]).map((attachment) => attachment.data);
@@ -146,6 +150,26 @@ async function* demoStream(messages, signal) {
 
 async function* ollamaStream(config, messages, signal) {
   if (!config.ollama.model) throw new Error("FLUX_OLLAMA_MODEL is required for the Ollama provider.");
+  if (hasImageAttachments(messages)) {
+    // Ollama otherwise accepts the request but text-only models silently ignore
+    // the `images` field, which looks like an attachment failure to the user.
+    try {
+      const inspection = await fetch(`${config.ollama.baseUrl}/api/show`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: config.ollama.model }),
+        signal: requestSignal(signal),
+      });
+      if (inspection.ok) {
+        const details = await inspection.json();
+        if (!details.capabilities?.includes("vision")) throw new Error(`Ollama model '${config.ollama.model}' does not support image input. Choose a model marked 'vision' in the model list.`);
+      }
+    } catch (error) {
+      if (error.message?.includes("does not support image input")) throw error;
+      // Older Ollama versions may not provide /api/show. Continue so their
+      // compatible vision models still receive the standard images payload.
+    }
+  }
   const response = await fetch(`${config.ollama.baseUrl}/api/chat`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -254,7 +278,7 @@ async function* lmStudioStream(config, messages, signal) {
 
 async function* factchatStream(config, messages, signal) {
   if (!config.factchat.apiKey || !config.factchat.model) throw new Error("FactChat API 키와 모델 이름을 입력하세요.");
-  const response = await fetch(`${config.factchat.baseUrl}/chat/completions/`, { method: "POST", headers: { authorization: `Bearer ${config.factchat.apiKey}`, "content-type": "application/json" }, body: JSON.stringify({ model: config.factchat.model, stream: true, messages: asConversation(messages) }), signal: requestSignal(signal) });
+  const response = await fetch(`${config.factchat.baseUrl}/chat/completions/`, { method: "POST", headers: { authorization: `Bearer ${config.factchat.apiKey}`, "content-type": "application/json" }, body: JSON.stringify({ model: config.factchat.model, stream: true, messages: chatVisionConversation(messages) }), signal: requestSignal(signal) });
   if (!response.ok || !response.body) throw new Error(`FactChat returned ${response.status}: ${await response.text()}`);
   const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
   while (true) { const { done, value } = await reader.read(); buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done }); const events = buffer.split("\n\n"); buffer = events.pop() ?? ""; for (const rawEvent of events) { const data = rawEvent.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n"); if (!data || data === "[DONE]") continue; const event = JSON.parse(data); if (event.error) throw new Error(event.error.message ?? "FactChat returned an error."); if (event.choices?.[0]?.delta?.content) yield event.choices[0].delta.content; } if (done) break; }
@@ -262,7 +286,7 @@ async function* factchatStream(config, messages, signal) {
 
 async function* factchatResponsesStream(config, messages, signal) {
   if (!config.factchat.apiKey || !config.factchat.model) throw new Error("FactChat API 키와 Codex 모델 이름을 입력하세요.");
-  const response = await fetch(`${config.factchat.baseUrl}/responses/`, { method: "POST", headers: { authorization: `Bearer ${config.factchat.apiKey}`, "content-type": "application/json" }, body: JSON.stringify({ model: config.factchat.model, stream: true, input: asConversation(messages) }), signal: requestSignal(signal) });
+  const response = await fetch(`${config.factchat.baseUrl}/responses/`, { method: "POST", headers: { authorization: `Bearer ${config.factchat.apiKey}`, "content-type": "application/json" }, body: JSON.stringify({ model: config.factchat.model, stream: true, input: responsesConversation(messages) }), signal: requestSignal(signal) });
   if (!response.ok || !response.body) throw new Error(`FactChat Responses returned ${response.status}: ${await response.text()}`);
   const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
   while (true) { const { done, value } = await reader.read(); buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done }); const events = buffer.split("\n\n"); buffer = events.pop() ?? ""; for (const rawEvent of events) { const lines = rawEvent.split("\n"); const name = lines.find((line) => line.startsWith("event:"))?.slice(6).trim(); const data = lines.filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n"); if (!data || data === "[DONE]") continue; const event = JSON.parse(data); if (name === "response.output_text.delta" && event.delta) yield event.delta; if (name === "error" || event.error) throw new Error(event.error?.message ?? "FactChat Responses returned an error."); } if (done) break; }

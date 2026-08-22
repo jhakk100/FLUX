@@ -392,6 +392,15 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
     return { ...approval, payload: JSON.parse(approval.payload), status, decidedAt };
   }
 
+  function expireApproval(approvalId, reason) {
+    const approval = database.prepare("SELECT * FROM approvals WHERE id = ?").get(approvalId);
+    if (!approval || approval.status !== "pending") return null;
+    const decidedAt = now();
+    database.prepare("UPDATE approvals SET status = ?, decided_at = ? WHERE id = ?").run("expired", decidedAt, approvalId);
+    audit("approval.expired", "approval", approvalId, { action: approval.action, target: approval.target, reason });
+    return { ...approval, payload: JSON.parse(approval.payload), status: "expired", decidedAt };
+  }
+
   function listAuditEvents(limit = 100) {
     return database.prepare("SELECT id, event_type AS eventType, resource_type AS resourceType, resource_id AS resourceId, details, created_at AS createdAt FROM audit_events ORDER BY created_at DESC LIMIT ?").all(limit)
       .map((item) => ({ ...item, details: JSON.parse(item.details) }));
@@ -409,5 +418,5 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
     audit("setting.updated", "setting", key, { key });
   }
 
-  return { close: () => database.close(), createProject, listProjects, getProject, updateProjectInstructions, createSession, listSessions, getSession, renameSession, archiveSession, updateSessionModel, searchSessions, addMessage, listMessages, createPendingAttachment, getAttachment, attachPendingAttachments, deletePendingAttachment, deleteMessage, getOrCreateDiscordSession, getSessionContext, saveSessionContext, listMemories, createMemory, updateMemory, deleteMemory, listGoals, createGoal, updateGoal, deleteGoal, createApproval, listApprovals, getApproval, decideApproval, listAuditEvents, getSetting, setSetting };
+  return { close: () => database.close(), createProject, listProjects, getProject, updateProjectInstructions, createSession, listSessions, getSession, renameSession, archiveSession, updateSessionModel, searchSessions, addMessage, listMessages, createPendingAttachment, getAttachment, attachPendingAttachments, deletePendingAttachment, deleteMessage, getOrCreateDiscordSession, getSessionContext, saveSessionContext, listMemories, createMemory, updateMemory, deleteMemory, listGoals, createGoal, updateGoal, deleteGoal, createApproval, listApprovals, getApproval, decideApproval, expireApproval, listAuditEvents, getSetting, setSetting };
 }

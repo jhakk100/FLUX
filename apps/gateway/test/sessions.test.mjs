@@ -84,3 +84,18 @@ test("a stored assistant response can be removed after a successful regeneration
   assert.deepEqual(store.listMessages(session.id).map((message) => message.content), ["질문"]);
   store.close();
 });
+
+test("a stale pending approval can be expired without being applied", async (context) => {
+  const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "flux-expired-approval-"));
+  context.after(() => fs.rm(dataDirectory, { recursive: true, force: true }));
+  const store = openStore(dataDirectory);
+  const approval = store.createApproval({
+    action: "delete-file", risk: "R3", target: "C:/workspace/missing.txt", preview: "Delete missing.txt",
+    payload: { projectId: "missing-project", relativePath: "missing.txt", expectedHash: "old" },
+  });
+  const expired = store.expireApproval(approval.id, "The requested file no longer exists.");
+  assert.equal(expired.status, "expired");
+  assert.equal(store.listApprovals().find((item) => item.id === approval.id).status, "expired");
+  assert.equal(store.expireApproval(approval.id, "again"), null);
+  store.close();
+});
