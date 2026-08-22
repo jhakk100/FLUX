@@ -121,6 +121,7 @@ const MAX_ATTACHMENTS_PER_MESSAGE = 4;
 const MAX_ATTACHMENT_TEXT_CHARS = 40_000;
 const ATTACHMENT_DIRECTORY = path.join(config.dataDirectory, "attachments");
 const MAX_COLLABORATION_AGENTS = 4;
+const MAX_PROJECT_CHILD_SESSIONS = 4;
 const TEXT_ATTACHMENT_TYPES = new Set(["text/plain", "text/markdown", "text/csv", "application/json", "application/xml", "text/xml", "text/html", "text/css", "application/javascript"]);
 const HIDDEN_WORKSPACE_ENTRIES = new Set([".git", ".flux-trash", "node_modules"]);
 const WORKSPACE_OVERVIEW_FILES = new Set(["readme.md", "package.json", "pyproject.toml", "cargo.toml", "go.mod", "requirements.txt", "compose.yaml", "docker-compose.yml"]);
@@ -495,6 +496,26 @@ async function collectProjectAgentReports({ project, agents, modelContext, contr
 }
 
 
+async function collectProjectChildReports({ project, content, controller }) {
+  const children = store.listSessions().filter((candidate) => candidate.projectId === project.id && !candidate.projectLead).slice(0, MAX_PROJECT_CHILD_SESSIONS);
+  if (!children.length) throw requestError("This project has no child conversations to distribute to. Create a child conversation first.");
+  const settled = await Promise.allSettled(children.map(async (child) => {
+    if (activeChatControllers.has(child.id)) throw new Error("child conversation is currently generating");
+    const history = await prepareMessagesForModel(store.listMessages(child.id));
+    const messages = [
+      { role: "system", content: "You are a child conversation in a FLUX project. Analyze the project leader's assigned request. Do not execute file tools or claim that you changed files; return a concise report for the project leader." },
+      ...history,
+      { role: "user", content: `[Project leader assignment]\n${content}` },
+    ];
+    let report = "";
+    for await (const delta of streamCompletion(resolveSessionProvider(providerRuntime.get(), child), messages, { signal: controller.signal })) report += delta;
+    if (!report.trim()) throw new Error("empty response");
+    return report.trim().slice(0, 16_000);
+  }));
+  const reports = settled.map((result) => result.status === "fulfilled" ? result.value : `Child unavailable: ${redactSecret(result.reason?.message || "unknown error")}`);
+  return { selected: children.map((child) => ({ name: child.title, role: "프로젝트 하위 대화" })), reports };
+}
+
 async function generateAssistantReply(session, content, { onDelta = () => {}, appendUser = true, attachmentIds = [], excludeMessageId = null, collaborate = false } = {}) {
   if (session.archivedAt) throw requestError("Archived sessions must be restored before sending a message.", 409);
   if (activeChatControllers.has(session.id)) throw requestError("This session already has an active generation.", 409);
@@ -527,7 +548,9 @@ async function generateAssistantReply(session, content, { onDelta = () => {}, ap
     const conversation = [responseFormat, agentInstructions, instruction, workspace, fileTools, memory, goals, notion, modelContext.summaryMessage, ...modelContext.activeMessages].filter(Boolean);
     if (collaborate) {
       if (!project) throw requestError("Collaboration is available only in a project conversation.");
-      const collaboration = await collectProjectAgentReports({ project, agents: store.listProjectAgents(project.id), modelContext, controller });
+      const collaboration = session.projectLead
+        ? await collectProjectChildReports({ project, content, controller })
+        : await collectProjectAgentReports({ project, agents: store.listProjectAgents(project.id), modelContext, controller });
       conversation.push(projectAgentReportMessage(collaboration.selected, collaboration.reports));
     }
     for (let toolTurns = 0; toolTurns < 6; toolTurns += 1) {
@@ -975,6 +998,11 @@ async function handle(request, response) {
     if (!store.deleteProjectAgent(projectId, agentId)) return json(response, 404, { error: "Project agent not found." });
     return json(response, 204, {});
   }
+  const projectLeadMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/lead-session$/);
+  if (projectLeadMatch && request.method === "POST") {
+    const project = requireProject(projectLeadMatch[1]);
+    return json(response, 200, store.ensureProjectLeadSession(project));
+  }
   const projectMatch = url.pathname.match(/^\/api\/projects\/([^/]+)$/);
   if (projectMatch && request.method === "DELETE") {
     const project = store.deleteProject(projectMatch[1]);
@@ -986,7 +1014,12 @@ async function handle(request, response) {
   }
   if (url.pathname === "/api/sessions" && request.method === "POST") {
     const body = await readJson(request);
-    return json(response, 201, store.createSession({ projectId: body.projectId ?? null, title: body.title?.trim() || "새 대화", source: body.source ?? "web" }));
+    const projectId = body.projectId == null || body.projectId === "" ? null : String(body.projectId);
+    if (projectId) {
+      requireProject(projectId);
+      if (store.countProjectChildSessions(projectId) >= MAX_PROJECT_CHILD_SESSIONS) return json(response, 409, { error: `A project can have at most ${MAX_PROJECT_CHILD_SESSIONS} active child conversations.` });
+    }
+    return json(response, 201, store.createSession({ projectId, title: body.title?.trim() || "새 대화", source: body.source ?? "web" }));
   }
   const sessionModelMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/model$/);
   if (sessionModelMatch && request.method === "GET") {

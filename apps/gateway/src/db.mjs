@@ -48,6 +48,7 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
       title TEXT NOT NULL,
       source TEXT NOT NULL DEFAULT 'web',
       created_at TEXT NOT NULL,
+      project_lead INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS messages (
@@ -131,6 +132,10 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
   }
   if (!sessionColumns.some((column) => column.name === "model_override")) {
     database.exec("ALTER TABLE sessions ADD COLUMN model_override TEXT");
+  if (!sessionColumns.some((column) => column.name === "project_lead")) {
+    database.exec("ALTER TABLE sessions ADD COLUMN project_lead INTEGER NOT NULL DEFAULT 0");
+  }
+  database.exec("CREATE UNIQUE INDEX IF NOT EXISTS project_lead_session_idx ON sessions (project_id) WHERE project_lead = 1");
   }
   const projectColumns = database.prepare("PRAGMA table_info(projects)").all();
   if (!projectColumns.some((column) => column.name === "instructions")) {
@@ -229,17 +234,32 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
     audit("project.deleted", "project", projectId, { name: project.name, workspacePath: project.workspacePath, workspaceDeleted: false });
     return project;
   }
-  function createSession({ projectId = null, title = "새 대화", source = "web", providerOverride = null, modelOverride = null }) {
-    const session = { id: id(), projectId, title, source, providerOverride, modelOverride, createdAt: now(), updatedAt: now() };
-    database.prepare("INSERT INTO sessions (id, project_id, title, source, provider_override, model_override, created_at, updated_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(session.id, session.projectId, session.title, session.source, session.providerOverride, session.modelOverride, session.createdAt, session.updatedAt, null);
-    audit("session.created", "session", session.id, { projectId, source });
+  function createSession({ projectId = null, projectLead = false, title = "새 대화", source = "web", providerOverride = null, modelOverride = null }) {
+    const session = { id: id(), projectId, projectLead: Boolean(projectLead), title, source, providerOverride, modelOverride, createdAt: now(), updatedAt: now() };
+    database.prepare("INSERT INTO sessions (id, project_id, project_lead, title, source, provider_override, model_override, created_at, updated_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(session.id, session.projectId, session.projectLead ? 1 : 0, session.title, session.source, session.providerOverride, session.modelOverride, session.createdAt, session.updatedAt, null);
+    audit("session.created", "session", session.id, { projectId, projectLead: session.projectLead, source });
     return session;
   }
 
   function listSessions({ archived = false } = {}) {
-    return database.prepare("SELECT id, project_id AS projectId, title, source, provider_override AS providerOverride, model_override AS modelOverride, created_at AS createdAt, updated_at AS updatedAt, archived_at AS archivedAt FROM sessions WHERE (archived_at IS NOT NULL) = ? ORDER BY updated_at DESC")
+    return database.prepare("SELECT id, project_id AS projectId, project_lead AS projectLead, title, source, provider_override AS providerOverride, model_override AS modelOverride, created_at AS createdAt, updated_at AS updatedAt, archived_at AS archivedAt FROM sessions WHERE (archived_at IS NOT NULL) = ? ORDER BY updated_at DESC")
       .all(archived ? 1 : 0);
+  }
+
+  function countProjectChildSessions(projectId, { archived = false } = {}) {
+    return database.prepare("SELECT COUNT(*) AS count FROM sessions WHERE project_id = ? AND project_lead = 0 AND (archived_at IS NOT NULL) = ?")
+      .get(projectId, archived ? 1 : 0).count;
+  }
+
+  function getProjectLeadSession(projectId) {
+    return database.prepare("SELECT id, project_id AS projectId, project_lead AS projectLead, title, source, provider_override AS providerOverride, model_override AS modelOverride, created_at AS createdAt, updated_at AS updatedAt, archived_at AS archivedAt FROM sessions WHERE project_id = ? AND project_lead = 1").get(projectId) ?? null;
+  }
+
+  function ensureProjectLeadSession(project) {
+    const existing = getProjectLeadSession(project.id);
+    if (existing) return existing.archivedAt ? archiveSession(existing.id, false) : existing;
+    return createSession({ projectId: project.id, projectLead: true, title: `${project.name} · 프로젝트 대화` });
   }
 
   function getSession(sessionId) {
@@ -501,5 +521,5 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
     audit("setting.updated", "setting", key, { key });
   }
 
-  return { close: () => database.close(), createProject, listProjects, getProject, updateProjectInstructions, listProjectAgents, getProjectAgent, createProjectAgent, updateProjectAgent, deleteProjectAgent, deleteProject, createSession, listSessions, getSession, renameSession, archiveSession, updateSessionModel, searchSessions, addMessage, listMessages, createPendingAttachment, getAttachment, attachPendingAttachments, deletePendingAttachment, deleteMessage, deleteSession, getOrCreateDiscordSession, getSessionContext, saveSessionContext, listMemories, createMemory, updateMemory, deleteMemory, listGoals, createGoal, updateGoal, deleteGoal, createApproval, listApprovals, getApproval, decideApproval, expireApproval, listAuditEvents, getSetting, setSetting };
+  return { close: () => database.close(), createProject, listProjects, getProject, updateProjectInstructions, listProjectAgents, getProjectAgent, createProjectAgent, updateProjectAgent, deleteProjectAgent, deleteProject, createSession, listSessions, countProjectChildSessions, getProjectLeadSession, ensureProjectLeadSession, getSession, renameSession, archiveSession, updateSessionModel, searchSessions, addMessage, listMessages, createPendingAttachment, getAttachment, attachPendingAttachments, deletePendingAttachment, deleteMessage, deleteSession, getOrCreateDiscordSession, getSessionContext, saveSessionContext, listMemories, createMemory, updateMemory, deleteMemory, listGoals, createGoal, updateGoal, deleteGoal, createApproval, listApprovals, getApproval, decideApproval, expireApproval, listAuditEvents, getSetting, setSetting };
 }

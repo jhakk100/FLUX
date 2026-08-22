@@ -1,6 +1,6 @@
 {
   "name": "flux",
-  "version": "0.3.0",
+  "version": "0.3.0-beta.2",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.19.0",
