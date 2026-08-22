@@ -44,6 +44,22 @@ test("each FLUX project owns its instructions independently", async (context) =>
   store.close();
 });
 
+test("project teams are isolated and removed with their FLUX project only", async (context) => {
+  const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "flux-project-agents-"));
+  context.after(() => fs.rm(dataDirectory, { recursive: true, force: true }));
+  const store = openStore(dataDirectory);
+  const first = store.createProject({ name: "first", workspacePath: "C:/work/first" });
+  const second = store.createProject({ name: "second", workspacePath: "C:/work/second" });
+  const agent = store.createProjectAgent({ projectId: first.id, name: "검토자", role: "코드 검토", providerOverride: "ollama", modelOverride: "gemma4:e2b" });
+  store.createProjectAgent({ projectId: second.id, name: "분석가", providerOverride: "factchat", modelOverride: "gpt-5-nano" });
+  assert.equal(store.listProjectAgents(first.id)[0].id, agent.id);
+  assert.equal(store.updateProjectAgent(first.id, agent.id, { name: "설계 검토자", enabled: false }).enabled, false);
+  store.deleteProject(first.id);
+  assert.equal(store.listProjectAgents(first.id).length, 0);
+  assert.equal(store.listProjectAgents(second.id).length, 1);
+  store.close();
+});
+
 test("legacy executable data migrates into the persistent data directory once", async (context) => {
   const legacyDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "flux-legacy-data-"));
   const persistentDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "flux-persistent-data-"));

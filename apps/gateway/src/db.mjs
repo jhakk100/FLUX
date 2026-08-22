@@ -30,6 +30,18 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
       instructions TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS project_agents (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT '',
+      provider_override TEXT NOT NULL,
+      model_override TEXT,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS project_agents_project_idx ON project_agents (project_id, created_at);
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
       project_id TEXT REFERENCES projects(id),
@@ -154,6 +166,49 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
     database.prepare("UPDATE projects SET instructions = ? WHERE id = ?").run(instructions, projectId);
     audit("project.instructions_updated", "project", projectId, { length: instructions.length });
     return getProject(projectId);
+  }
+
+  function listProjectAgents(projectId) {
+    return database.prepare("SELECT id, project_id AS projectId, name, role, provider_override AS providerOverride, model_override AS modelOverride, enabled, created_at AS createdAt, updated_at AS updatedAt FROM project_agents WHERE project_id = ? ORDER BY created_at ASC").all(projectId)
+      .map((agent) => ({ ...agent, enabled: Boolean(agent.enabled) }));
+  }
+
+  function getProjectAgent(projectId, agentId) {
+    const agent = database.prepare("SELECT id, project_id AS projectId, name, role, provider_override AS providerOverride, model_override AS modelOverride, enabled, created_at AS createdAt, updated_at AS updatedAt FROM project_agents WHERE project_id = ? AND id = ?").get(projectId, agentId);
+    return agent ? { ...agent, enabled: Boolean(agent.enabled) } : null;
+  }
+
+  function createProjectAgent({ projectId, name, role = "", providerOverride, modelOverride = null, enabled = true }) {
+    const agent = { id: id(), projectId, name, role, providerOverride, modelOverride, enabled: Boolean(enabled), createdAt: now(), updatedAt: now() };
+    database.prepare("INSERT INTO project_agents (id, project_id, name, role, provider_override, model_override, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(agent.id, agent.projectId, agent.name, agent.role, agent.providerOverride, agent.modelOverride, agent.enabled ? 1 : 0, agent.createdAt, agent.updatedAt);
+    audit("project_agent.created", "project_agent", agent.id, { projectId, name, providerOverride, modelOverride, enabled: agent.enabled });
+    return agent;
+  }
+
+  function updateProjectAgent(projectId, agentId, { name, role, providerOverride, modelOverride, enabled }) {
+    const agent = getProjectAgent(projectId, agentId);
+    if (!agent) return null;
+    const next = {
+      name: name ?? agent.name,
+      role: role ?? agent.role,
+      providerOverride: providerOverride ?? agent.providerOverride,
+      modelOverride: modelOverride === undefined ? agent.modelOverride : modelOverride,
+      enabled: enabled ?? agent.enabled,
+      updatedAt: now(),
+    };
+    database.prepare("UPDATE project_agents SET name = ?, role = ?, provider_override = ?, model_override = ?, enabled = ?, updated_at = ? WHERE id = ?")
+      .run(next.name, next.role, next.providerOverride, next.modelOverride, next.enabled ? 1 : 0, next.updatedAt, agentId);
+    audit("project_agent.updated", "project_agent", agentId, { projectId, name: next.name, providerOverride: next.providerOverride, modelOverride: next.modelOverride, enabled: Boolean(next.enabled) });
+    return getProjectAgent(projectId, agentId);
+  }
+
+  function deleteProjectAgent(projectId, agentId) {
+    const agent = getProjectAgent(projectId, agentId);
+    if (!agent) return null;
+    database.prepare("DELETE FROM project_agents WHERE id = ?").run(agentId);
+    audit("project_agent.deleted", "project_agent", agentId, { projectId, name: agent.name });
+    return agent;
   }
 
 
@@ -446,5 +501,5 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
     audit("setting.updated", "setting", key, { key });
   }
 
-  return { close: () => database.close(), createProject, listProjects, getProject, updateProjectInstructions, deleteProject, createSession, listSessions, getSession, renameSession, archiveSession, updateSessionModel, searchSessions, addMessage, listMessages, createPendingAttachment, getAttachment, attachPendingAttachments, deletePendingAttachment, deleteMessage, deleteSession, getOrCreateDiscordSession, getSessionContext, saveSessionContext, listMemories, createMemory, updateMemory, deleteMemory, listGoals, createGoal, updateGoal, deleteGoal, createApproval, listApprovals, getApproval, decideApproval, expireApproval, listAuditEvents, getSetting, setSetting };
+  return { close: () => database.close(), createProject, listProjects, getProject, updateProjectInstructions, listProjectAgents, getProjectAgent, createProjectAgent, updateProjectAgent, deleteProjectAgent, deleteProject, createSession, listSessions, getSession, renameSession, archiveSession, updateSessionModel, searchSessions, addMessage, listMessages, createPendingAttachment, getAttachment, attachPendingAttachments, deletePendingAttachment, deleteMessage, deleteSession, getOrCreateDiscordSession, getSessionContext, saveSessionContext, listMemories, createMemory, updateMemory, deleteMemory, listGoals, createGoal, updateGoal, deleteGoal, createApproval, listApprovals, getApproval, decideApproval, expireApproval, listAuditEvents, getSetting, setSetting };
 }
