@@ -212,7 +212,7 @@ async function* ollamaStream(config, messages, signal) {
   }
 }
 
-async function* openAiCompatibleStream(config, safeMessages, signal) {
+async function* openAiCompatibleStream(config, messages, signal) {
   if (!config.openai.apiKey) throw new Error("FLUX_OPENAI_API_KEY is required for the OpenAI-compatible provider.");
   if (!config.openai.model) throw new Error("FLUX_OPENAI_MODEL is required for the OpenAI-compatible provider.");
   const response = await fetch(`${config.openai.baseUrl}/responses`, {
@@ -284,7 +284,7 @@ async function* chatCompatibleStream(connection, messages, signal, { name, apiKe
   }
 }
 
-async function* openAiChatCompatibleStream(config, safeMessages, signal) {
+async function* openAiChatCompatibleStream(config, messages, signal) {
   yield* chatCompatibleStream(config.openai, messages, signal, { name: "Model provider", apiKeyRequired: true });
 }
 
@@ -292,7 +292,7 @@ async function* lmStudioStream(config, messages, signal) {
   yield* chatCompatibleStream(config.lmstudio, messages, signal, { name: "LM Studio", apiKeyRequired: false });
 }
 
-async function* factchatStream(config, safeMessages, signal) {
+async function* factchatStream(config, messages, signal) {
   if (!config.factchat.apiKey || !config.factchat.model) throw new Error("FactChat API 키와 모델 이름을 입력하세요.");
   const response = await fetch(`${config.factchat.baseUrl}/chat/completions/`, { method: "POST", headers: { authorization: `Bearer ${config.factchat.apiKey}`, "content-type": "application/json" }, body: JSON.stringify({ model: config.factchat.model, stream: true, messages: chatVisionConversation(messages) }), signal: requestSignal(signal) });
   if (!response.ok || !response.body) throw new Error(`FactChat returned ${response.status}: ${await response.text()}`);
@@ -300,7 +300,7 @@ async function* factchatStream(config, safeMessages, signal) {
   while (true) { const { done, value } = await reader.read(); buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done }); const events = buffer.split("\n\n"); buffer = events.pop() ?? ""; for (const rawEvent of events) { const data = rawEvent.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n"); if (!data || data === "[DONE]") continue; const event = JSON.parse(data); if (event.error) throw new Error(event.error.message ?? "FactChat returned an error."); if (event.choices?.[0]?.delta?.content) yield event.choices[0].delta.content; } if (done) break; }
 }
 
-async function* factchatResponsesStream(config, safeMessages, signal) {
+async function* factchatResponsesStream(config, messages, signal) {
   if (!config.factchat.apiKey || !config.factchat.model) throw new Error("FactChat API 키와 Codex 모델 이름을 입력하세요.");
   const response = await fetch(`${config.factchat.baseUrl}/responses/`, { method: "POST", headers: { authorization: `Bearer ${config.factchat.apiKey}`, "content-type": "application/json" }, body: JSON.stringify({ model: config.factchat.model, stream: true, input: responsesConversation(messages) }), signal: requestSignal(signal) });
   if (!response.ok || !response.body) throw new Error(`FactChat Responses returned ${response.status}: ${await response.text()}`);

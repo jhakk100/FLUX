@@ -119,3 +119,16 @@ test("provider streams ignore an absent optional system message", async () => {
   for await (const delta of streamCompletion(baseConfig, [null, { role: "user", content: "hello" }])) text += delta;
   assert.match(text, /hello/);
 });
+test("FactChat stream accepts optional absent messages and emits its response", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response('data: {"choices":[{"delta":{"content":"FACTCHAT_OK"}}]}\n\ndata: [DONE]\n\n');
+  try {
+    const runtime = createProviderRuntime(baseConfig);
+    runtime.configure({ provider: "factchat", factchatModel: "gpt-5.6-luna", factchatApiKey: "secret" });
+    let text = "";
+    for await (const delta of streamCompletion(runtime.get(), [null, { role: "user", content: "test" }])) text += delta;
+    assert.equal(text, "FACTCHAT_OK");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
