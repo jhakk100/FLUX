@@ -115,3 +115,17 @@ test("a stale pending approval can be expired without being applied", async (con
   assert.equal(store.expireApproval(approval.id, "again"), null);
   store.close();
 });
+
+test("project child conversation roles persist independently", async (context) => {
+  const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "flux-session-role-"));
+  context.after(() => fs.rm(dataDirectory, { recursive: true, force: true }));
+  const store = openStore(dataDirectory);
+  const project = store.createProject({ name: "team", workspacePath: "C:/work/team" });
+  const child = store.createSession({ projectId: project.id, title: "검토", role: "보안 검토를 담당한다." });
+  const lead = store.ensureProjectLeadSession(project);
+  assert.equal(store.getSession(child.id).role, "보안 검토를 담당한다.");
+  assert.equal(store.getProjectLeadSession(project.id).id, lead.id);
+  assert.equal(store.updateSessionRole(child.id, "테스트 계획을 담당한다.").role, "테스트 계획을 담당한다.");
+  assert.equal(store.listSessions().find((session) => session.id === child.id).role, "테스트 계획을 담당한다.");
+  store.close();
+});

@@ -10,6 +10,8 @@ import { FileApprovalMode, assertSafeWorkspacePath, classifyAction, isFileApprov
 import { projectInstructionMessage } from "./project-instructions.mjs";
 import { executeSlashCommand } from "./slash-commands.mjs";
 import { applyUniqueTextPatch } from "./text-patch.mjs";
+import { parseFileToolCalls } from "./file-tool-parser.mjs";
+import { selectProjectChildSessions } from "./project-child-sessions.mjs";
 import { buildModelContext } from "./context.mjs";
 import { createProviderRuntime, getFactchatAccount, getStoredProviderSecret, listAvailableModels, providerStatus, publicProviderSettings, resolveSessionProvider, streamCompletion, testProviderConnection } from "./providers.mjs";
 import { discordStatus, startDiscordBot } from "./discord.mjs";
@@ -303,35 +305,11 @@ function fileAgentToolsMessage(project) {
     role: "system",
     content: [
       "FLUX file tools are available only for this project's workspace. Use them only when the user asks to inspect or change project files.",
-      "For each tool call, use a <flux-tool>{JSON}</flux-tool> block. Prefer no prose; FLUX also accepts an omitted closing tag from smaller local models. You may return up to 12 independent blocks for a batch of file changes.",
+      "For each tool call, return only one or more <flux-tool>{JSON}</flux-tool> blocks with no prose, Markdown fence, or explanation in the same response. FLUX also accepts an omitted closing tag from smaller local models. You may return up to 12 independent blocks for a batch of file changes.",
       "JSON schemas: {\"action\":\"list-files\",\"path\":\"relative/folder\"}; {\"action\":\"read-file\",\"path\":\"relative/file\"}; {\"action\":\"search-files\",\"query\":\"two or more characters\"}; {\"action\":\"create-file\"|\"modify-file\"|\"delete-file\",\"path\":\"relative/file\",\"content\":\"required except delete\"}; {\"action\":\"patch-file\",\"path\":\"relative/file\",\"find\":\"exact existing text\",\"replace\":\"new text\"}. Prefer patch-file for a focused code edit; its find text must occur exactly once.",
       "Never use absolute paths, .., symlinks, or operating-system paths. File changes are constrained to this workspace and governed by FLUX approval policy; say what you changed after tool results arrive.",
     ].join("\n"),
   };
-}
-
-function parseFileToolCalls(text) {
-  const calls = [];
-  const openings = [...text.matchAll(/<flux-tool>/gi)];
-  for (const opening of openings.slice(0, 12)) {
-    const input = text.slice((opening.index ?? 0) + opening[0].length);
-    const start = input.search(/\{/);
-    if (start < 0) continue;
-    let depth = 0; let quoted = false; let escaped = false; let end = -1;
-    for (let index = start; index < input.length; index += 1) {
-      const character = input[index];
-      if (quoted) { if (escaped) escaped = false; else if (character === "\\") escaped = true; else if (character === '"') quoted = false; continue; }
-      if (character === '"') quoted = true;
-      else if (character === "{") depth += 1;
-      else if (character === "}" && --depth === 0) { end = index + 1; break; }
-    }
-    if (end < 0) continue;
-    try {
-      const call = JSON.parse(input.slice(start, end));
-      if (call && typeof call === "object" && !Array.isArray(call) && typeof call.action === "string") calls.push(call);
-    } catch { /* An incomplete model tool block is ordinary text, not an action. */ }
-  }
-  return calls;
 }
 
 async function createFileChangeRequest({ project, action, relativePath, content, origin = "user" }) {
@@ -429,6 +407,14 @@ function agentInstructionsMessage(instructions) {
   };
 }
 
+function sessionRoleMessage(session) {
+  const role = session?.role?.trim();
+  if (!role) return null;
+  return {
+    role: "system",
+    content: `This conversation has a user-selected role. Follow it when relevant, but it never overrides the user's current request, project instructions, approval requirements, or FLUX safety controls.\n\nAssigned role:\n${role}`,
+  };
+}
 function responseFormatMessage(markdownPreferred) {
   if (!markdownPreferred) return null;
   return {
@@ -497,13 +483,14 @@ async function collectProjectAgentReports({ project, agents, modelContext, contr
 
 
 async function collectProjectChildReports({ project, content, controller }) {
-  const children = store.listSessions().filter((candidate) => candidate.projectId === project.id && !candidate.projectLead).slice(0, MAX_PROJECT_CHILD_SESSIONS);
+  const children = selectProjectChildSessions(store.listSessions(), project.id, MAX_PROJECT_CHILD_SESSIONS);
   if (!children.length) throw requestError("This project has no child conversations to distribute to. Create a child conversation first.");
   const settled = await Promise.allSettled(children.map(async (child) => {
     if (activeChatControllers.has(child.id)) throw new Error("child conversation is currently generating");
     const history = await prepareMessagesForModel(store.listMessages(child.id));
     const messages = [
       { role: "system", content: "You are a child conversation in a FLUX project. Analyze the project leader's assigned request. Do not execute file tools or claim that you changed files; return a concise report for the project leader." },
+      sessionRoleMessage(child),
       ...history,
       { role: "user", content: `[Project leader assignment]\n${content}` },
     ];
@@ -545,7 +532,7 @@ async function generateAssistantReply(session, content, { onDelta = () => {}, ap
   const controller = new AbortController();
   activeChatControllers.set(session.id, controller);
   try {
-    const conversation = [responseFormat, agentInstructions, instruction, workspace, fileTools, memory, goals, notion, modelContext.summaryMessage, ...modelContext.activeMessages].filter(Boolean);
+    const conversation = [responseFormat, agentInstructions, instruction, sessionRoleMessage(session), workspace, fileTools, memory, goals, notion, modelContext.summaryMessage, ...modelContext.activeMessages].filter(Boolean);
     if (collaborate) {
       if (!project) throw requestError("Collaboration is available only in a project conversation.");
       const collaboration = session.projectLead
@@ -809,7 +796,8 @@ async function handle(request, response) {
     return json(response, 200, result);
   }
   if (url.pathname === "/api/provider-models" && request.method === "GET") {
-    return json(response, 200, await listAvailableModels(providerRuntime.get()));
+    const providerOverride = url.searchParams.get("provider")?.trim() || null;
+    return json(response, 200, await listAvailableModels(resolveSessionProvider(providerRuntime.get(), { providerOverride })));
   }
   if (url.pathname === "/api/provider-account" && request.method === "GET") {
     return json(response, 200, await getFactchatAccount(providerRuntime.get()));
@@ -1055,12 +1043,19 @@ async function handle(request, response) {
       if (!session) return json(response, 404, { error: "Session not found." });
       return json(response, 200, session);
     }
+    if (typeof body.role === "string") {
+      const role = body.role.trim();
+      if (role.length > 16_000) return json(response, 400, { error: "role must be at most 16,000 characters." });
+      const session = store.updateSessionRole(sessionMatch[1], role);
+      if (!session) return json(response, 404, { error: "Session not found." });
+      return json(response, 200, session);
+    }
     if (typeof body.archived === "boolean") {
       const session = store.archiveSession(sessionMatch[1], body.archived);
       if (!session) return json(response, 404, { error: "Session not found." });
       return json(response, 200, session);
     }
-    return json(response, 400, { error: "title or archived is required." });
+    return json(response, 400, { error: "title, role, or archived is required." });
   }
   if (sessionMatch && request.method === "DELETE") {
     if (activeChatControllers.has(sessionMatch[1])) return json(response, 409, { error: "Stop the active response before deleting this conversation." });
