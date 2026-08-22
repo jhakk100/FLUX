@@ -410,6 +410,9 @@ function modelRecord(model, fallbackId) {
   const inputTokenLimit = model.inputTokenLimit ?? model.input_token_limit ?? model.context_length ?? model.max_context_length ?? null;
   const outputTokenLimit = model.outputTokenLimit ?? model.output_token_limit ?? model.max_output_tokens ?? null;
   const capabilities = model.supportedGenerationMethods ?? model.supported_actions ?? model.capabilities ?? null;
+  const inputModalities = model.input_modalities ?? model.inputModalities ?? null;
+  const imageInput = Array.isArray(inputModalities)
+    ? inputModalities.some((item) => String(item).toLowerCase() === "image") : undefined;
   return {
     id: String(id).replace(/^models\//, ""),
     name: model.displayName ?? model.display_name ?? String(id).replace(/^models\//, ""),
@@ -417,6 +420,7 @@ function modelRecord(model, fallbackId) {
     inputTokenLimit: Number.isFinite(inputTokenLimit) ? inputTokenLimit : null,
     outputTokenLimit: Number.isFinite(outputTokenLimit) ? outputTokenLimit : null,
     capabilities: Array.isArray(capabilities) ? capabilities.filter((item) => typeof item === "string") : [],
+    ...(typeof imageInput === "boolean" ? { imageInput } : {}),
   };
 }
 
@@ -435,7 +439,24 @@ export async function listAvailableModels(config) {
   if (config.provider === "demo") return { models: [], message: "Demo 모드에는 외부 모델 목록이 없습니다." };
   if (config.provider === "ollama") {
     const payload = await fetchModelList(`${config.ollama.baseUrl}/api/tags`, {});
-    return { models: (payload.models ?? []).map((model) => modelRecord({ id: model.name, displayName: model.name, provider: model.details?.family, capabilities: model.details?.families })).filter((model) => model.id) };
+    const models = await Promise.all((payload.models ?? []).map(async (model) => {
+      const fallbackCapabilities = model.details?.families ?? [];
+      try {
+        const response = await fetch(`${config.ollama.baseUrl}/api/show`, {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ model: model.name }), signal: AbortSignal.timeout(10_000),
+        });
+        if (!response.ok) throw new Error("Ollama model details are unavailable.");
+        const details = await response.json();
+        const capabilities = [...new Set([...fallbackCapabilities, ...(details.capabilities ?? [])])];
+        return { ...modelRecord({ id: model.name, displayName: model.name, provider: model.details?.family, capabilities }), imageInput: capabilities.includes("vision") };
+      } catch {
+        // Show unknown rather than falsely labelling a model text-only when an
+        // older or busy Ollama server cannot provide its details.
+        return { ...modelRecord({ id: model.name, displayName: model.name, provider: model.details?.family, capabilities: fallbackCapabilities }), imageInput: null };
+      }
+    }));
+    return { models: models.filter((model) => model.id) };
   }
   if (config.provider === "lm-studio") {
     const headers = config.lmstudio.apiKey ? { authorization: `Bearer ${config.lmstudio.apiKey}` } : {};

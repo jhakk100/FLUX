@@ -600,6 +600,12 @@ async function reconcilePendingApprovals() {
   }
 }
 
+function expirePendingDeleteApprovals(reason) {
+  const pendingDeletes = store.listApprovals().filter((approval) => approval.status === "pending" && approval.action === "delete-file");
+  for (const approval of pendingDeletes) store.expireApproval(approval.id, reason);
+  return pendingDeletes.length;
+}
+
 async function executeApprovedAction(approval, confirmationTarget) {
   if (approval.risk === "R3" && confirmationTarget !== approval.target) {
     const error = new Error("Destructive actions require an exact target confirmation.");
@@ -1045,6 +1051,25 @@ if (cliMode) {
     console.log(`FLUX Gateway is running at ${url}`);
     console.log(`Provider: ${providerStatus(providerRuntime.get()).provider}`);
     console.log(`Discord: ${discordStatus(config.discord).enabled ? "configured" : "disabled"}`);
+    // Delete approvals are intentionally valid only for the running FLUX
+    // session. A crash is handled by the same check when the next Gateway
+    // successfully starts.
+    expirePendingDeleteApprovals("FLUX started a new session; delete approvals do not survive a restart.");
+    let stopping = false;
+    const shutdown = () => {
+      if (stopping) return;
+      stopping = true;
+      expirePendingDeleteApprovals("FLUX was closed before this delete request was approved.");
+      void discordBot.stop().catch(() => {});
+      server.close(() => process.exit(0));
+      setTimeout(() => process.exit(0), 3_000).unref();
+    };
+    process.once("SIGINT", shutdown);
+    process.once("SIGTERM", shutdown);
+    process.once("exit", () => {
+      expirePendingDeleteApprovals("FLUX was closed before this delete request was approved.");
+      store.close();
+    });
     openDashboard(url);
   });
 }
