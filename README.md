@@ -8,7 +8,7 @@ Windows와 Linux에서 실행되는 로컬 우선 개인 AI 오케스트레이�
 
 베타 기간에는 Semantic Versioning을 사용합니다. 빨간 `FU` 아이콘·단일 실행 파일·CLI 배포 묶음으로 `0.2.0`에 진입했으며, 이후 호환되는 수정은 `0.2.x`, 사용자에게 보이는 기능 묶음은 `0.3.0`처럼 올립니다. 실행 중인 앱의 버전·연결 상태는 대시보드의 **설정**에서 확인할 수 있습니다.
 
-개발용 Node.js·pnpm 설치와 설치 파일 보관 절차는 [개발 환경 설치 안내](./setup/README.md)에 있습니다.
+개발용 Node.js·pnpm 설치와 설치 파일 보관 절차는 [개발 환경 설치 안내](./docs/developer/DEVELOPMENT_SETUP.md)에 있습니다.
 
 ## 실행
 
@@ -60,9 +60,9 @@ pnpm run check:build-processes
 
 Node의 단일 실행 파일 기능은 아직 활성 개발 단계라 첫 실행 시 실험적 기능 경고가 표시될 수 있습니다. 이 실행 파일은 Windows 전용이며, Linux 배포본은 해당 OS에서 별도로 빌드해야 합니다.
 
-Ollama를 쓰려면 `.env`에서 `FLUX_PROVIDER=ollama`와 모델 이름을 설정합니다. OpenAI 호환 Responses API를 쓰려면 `FLUX_PROVIDER=openai-compatible`, API 키, 모델을 설정합니다. API 키는 Git에 저장하지 않으며, 대시보드로 저장한 키의 현재 로컬 보관 방식은 [API 연결 안내](./docs/API_SETUP.md)에 명시합니다.
+Ollama를 쓰려면 `.env`에서 `FLUX_PROVIDER=ollama`와 모델 이름을 설정합니다. OpenAI 호환 Responses API를 쓰려면 `FLUX_PROVIDER=openai-compatible`, API 키, 모델을 설정합니다. API 키는 Git에 저장하지 않으며, 대시보드로 저장한 키의 현재 로컬 보관 방식은 [API 연결 안내](./docs/user/API_SETUP.md)에 명시합니다.
 
-API 설정 화면과 공급자별 복붙 예시는 [API 연결 안내](./docs/API_SETUP.md)에 있습니다.
+API 설정 화면과 공급자별 복붙 예시는 [API 연결 안내](./docs/user/API_SETUP.md)에 있습니다.
 
 ## 프로젝트 지침
 
@@ -89,12 +89,12 @@ FLUX는 기본적으로 추정 24,000 토큰의 75%에서 오래된 대화를 �
 - FLUX 프로젝트별 독립 지침을 대화에 자동 반영
 - 삭제·덮어쓰기·외부 효과를 자동 실행하지 않는 승인 정책 및 Windows/Linux 시스템 경로 프로젝트·변경 차단
 
-자세한 방향은 [설계 문서](./02-product-and-architecture.md)를 참고하세요.
+자세한 방향은 [설계 문서](./docs/developer/PRODUCT_ARCHITECTURE.md)를 참고하세요.
 
-Discord 봇 연결은 [Discord 연결 안내](./docs/DISCORD_SETUP.md)를 참고하세요.
+Discord 봇 연결은 [Discord 연결 안내](./docs/user/DISCORD_SETUP.md)를 참고하세요.
 
-Notion 연결은 [Notion 읽기 연결 안내](./docs/NOTION_SETUP.md)를 참고하세요.
+Notion 연결은 [Notion 읽기 연결 안내](./docs/user/NOTION_SETUP.md)를 참고하세요.
 
 ## 알려진 문제
 
-현재 확인된 제한·외부 서비스 문제·우회 방법은 [알려진 문제](./docs/KNOWN_ISSUES.md)에 기록합니다.
+현재 확인된 제한·외부 서비스 문제·우회 방법은 [알려진 문제](./docs/user/KNOWN_ISSUES.md)에 기록합니다.
