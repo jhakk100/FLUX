@@ -98,3 +98,19 @@ test("a provider stream accepts a cancellation signal", async () => {
   controller.abort();
   await assert.rejects(() => stream.next(), { name: "AbortError" });
 });
+
+test("Google AI stream keeps final consecutive SSE data records", async () => {
+  const originalFetch = globalThis.fetch;
+  const first = JSON.stringify({ candidates: [{ content: { parts: [{ text: "TEST_" }] } }] });
+  const second = JSON.stringify({ candidates: [{ content: { parts: [{ text: "OK" }] } }] });
+  globalThis.fetch = async () => new Response(`data: ${first}\ndata: ${second}`);
+  try {
+    const runtime = createProviderRuntime(baseConfig);
+    runtime.configure({ provider: "google-ai", googleAiModel: "gemini-test", googleAiApiKey: "secret" });
+    let text = "";
+    for await (const delta of streamCompletion(runtime.get(), [{ role: "user", content: "test" }])) text += delta;
+    assert.equal(text, "TEST_OK");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

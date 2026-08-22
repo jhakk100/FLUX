@@ -546,7 +546,7 @@ async function generateAssistantReply(session, content, { onDelta = () => {}, ap
       for await (const delta of streamCompletion(sessionProvider, conversation, { signal: controller.signal })) candidate += delta;
       const toolCalls = parseFileToolCalls(candidate);
       if (!toolCalls.length) {
-        fullText = candidate;
+        fullText = candidate.trim() || "선택한 모델이 빈 응답을 반환했습니다. 모델 설정을 확인한 뒤 다시 시도하세요.";
         onDelta(fullText);
         break;
       }

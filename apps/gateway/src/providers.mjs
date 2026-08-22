@@ -327,9 +327,29 @@ async function* googleAiStream(config, messages, signal) {
   });
   if (!response.ok || !response.body) throw new Error(`Google AI returned ${response.status}: ${await response.text()}`);
   const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
-  while (true) { const { done, value } = await reader.read(); buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done }); const events = buffer.split("\n\n"); buffer = events.pop() ?? ""; for (const rawEvent of events) { const data = rawEvent.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n"); if (!data || data === "[DONE]") continue; const event = JSON.parse(data); if (event.error) throw new Error(event.error.message ?? "Google AI returned an error."); for (const part of event.candidates?.[0]?.content?.parts ?? []) if (part.text) yield part.text; } if (done) break; }
+  const consumeEvent = function* (rawEvent) {
+    // Gemini can omit blank SSE separators and place several complete JSON
+    // payloads on consecutive data: lines. Each line is therefore one event.
+    const payloads = rawEvent.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim());
+    for (const data of payloads) {
+      if (!data || data === "[DONE]") continue;
+      const event = JSON.parse(data);
+      if (event.error) throw new Error(event.error.message ?? "Google AI returned an error.");
+      for (const part of event.candidates?.[0]?.content?.parts ?? []) if (part.text) yield part.text;
+    }
+  };
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+    const events = buffer.split("\n\n"); buffer = events.pop() ?? "";
+    for (const rawEvent of events) yield* consumeEvent(rawEvent);
+    if (done) {
+      // Gemini may finish an SSE stream without a final blank separator.
+      yield* consumeEvent(buffer);
+      break;
+    }
+  }
 }
-
 export function streamCompletion(config, messages, { signal } = {}) {
   if (config.provider === "ollama") return ollamaStream(config, messages, signal);
   if (config.provider === "lm-studio") return lmStudioStream(config, messages, signal);
