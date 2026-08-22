@@ -132,11 +132,11 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
   }
   if (!sessionColumns.some((column) => column.name === "model_override")) {
     database.exec("ALTER TABLE sessions ADD COLUMN model_override TEXT");
+  }
   if (!sessionColumns.some((column) => column.name === "project_lead")) {
     database.exec("ALTER TABLE sessions ADD COLUMN project_lead INTEGER NOT NULL DEFAULT 0");
   }
   database.exec("CREATE UNIQUE INDEX IF NOT EXISTS project_lead_session_idx ON sessions (project_id) WHERE project_lead = 1");
-  }
   const projectColumns = database.prepare("PRAGMA table_info(projects)").all();
   if (!projectColumns.some((column) => column.name === "instructions")) {
     database.exec("ALTER TABLE projects ADD COLUMN instructions TEXT NOT NULL DEFAULT ''");
@@ -263,7 +263,7 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
   }
 
   function getSession(sessionId) {
-    return database.prepare("SELECT id, project_id AS projectId, title, source, provider_override AS providerOverride, model_override AS modelOverride, created_at AS createdAt, updated_at AS updatedAt, archived_at AS archivedAt FROM sessions WHERE id = ?").get(sessionId);
+    return database.prepare("SELECT id, project_id AS projectId, project_lead AS projectLead, title, source, provider_override AS providerOverride, model_override AS modelOverride, created_at AS createdAt, updated_at AS updatedAt, archived_at AS archivedAt FROM sessions WHERE id = ?").get(sessionId);
   }
 
   function renameSession(sessionId, title) {
