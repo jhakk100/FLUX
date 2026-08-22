@@ -24,7 +24,7 @@ export function loadConfig(env = process.env) {
   // HARU_* is retained as a temporary migration fallback for existing local .env files.
   const setting = (name, fallback) => env[`FLUX_${name}`] ?? env[`HARU_${name}`] ?? fallback;
   const host = setting("HOST", "127.0.0.1");
-  const port = Number.parseInt(setting("PORT", "4317"), 10);
+  const port = Number.parseInt(setting("PORT", "4318"), 10);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error("FLUX_PORT must be an integer from 1 to 65535.");
   }
