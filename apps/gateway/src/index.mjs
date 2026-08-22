@@ -521,7 +521,9 @@ async function generateAssistantReply(session, content, { onDelta = () => {}, ap
     return { message: store.addMessage({ sessionId: session.id, role: "assistant", content: fullText }), cancelled: false };
   } catch (error) {
     if (controller.signal.aborted) return { message: fullText ? store.addMessage({ sessionId: session.id, role: "assistant", content: fullText }) : null, cancelled: true };
-    throw error;
+    const failureMessage = `응답 생성 실패: ${redactSecret(error.message ?? "알 수 없는 오류")}`;
+    onDelta(failureMessage);
+    return { message: store.addMessage({ sessionId: session.id, role: "assistant", content: failureMessage }), cancelled: false };
   } finally {
     activeChatControllers.delete(session.id);
   }
@@ -886,6 +888,12 @@ async function handle(request, response) {
     if (!project) return json(response, 404, { error: "Project not found." });
     return json(response, 200, project);
   }
+  const projectMatch = url.pathname.match(/^\/api\/projects\/([^/]+)$/);
+  if (projectMatch && request.method === "DELETE") {
+    const project = store.deleteProject(projectMatch[1]);
+    if (!project) return json(response, 404, { error: "Project not found." });
+    return json(response, 200, { deleted: true, project, workspaceDeleted: false });
+  }
   if (url.pathname === "/api/sessions" && request.method === "GET") {
     return json(response, 200, store.listSessions({ archived: url.searchParams.get("archived") === "true" }));
   }
@@ -933,6 +941,13 @@ async function handle(request, response) {
       return json(response, 200, session);
     }
     return json(response, 400, { error: "title or archived is required." });
+  }
+  if (sessionMatch && request.method === "DELETE") {
+    if (activeChatControllers.has(sessionMatch[1])) return json(response, 409, { error: "Stop the active response before deleting this conversation." });
+    const deleted = store.deleteSession(sessionMatch[1]);
+    if (!deleted) return json(response, 404, { error: "Session not found." });
+    await Promise.all(deleted.attachments.map((attachment) => fs.unlink(attachmentPath(attachment)).catch(() => {})));
+    return json(response, 200, { deleted: true });
   }
   const sessionMessagesMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/messages$/);
   if (sessionMessagesMatch && request.method === "GET") {

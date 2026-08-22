@@ -181,18 +181,34 @@ async function* ollamaStream(config, messages, signal) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let yieldedContent = false;
+  const consumeLine = function* (line) {
+    if (!line.trim()) return;
+    const event = JSON.parse(line);
+    if (event.message?.content) {
+      yieldedContent = true;
+      yield event.message.content;
+    }
+    if (event.error) throw new Error(event.error);
+  };
   while (true) {
     const { done, value } = await reader.read();
     buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
     const lines = buffer.split("\n");
     buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      const event = JSON.parse(line);
-      if (event.message?.content) yield event.message.content;
-      if (event.error) throw new Error(event.error);
+    for (const line of lines) yield* consumeLine(line);
+    if (done) {
+      // Some Ollama builds finish their JSONL response without a final newline.
+      // Process that last record instead of silently dropping the whole answer.
+      yield* consumeLine(buffer);
+      break;
     }
-    if (done) break;
+  }
+  if (!yieldedContent) {
+    const imageHint = hasImageAttachments(messages)
+      ? " The selected model reported vision support but returned no image analysis; try another local vision model or update Ollama."
+      : "";
+    throw new Error(`Ollama returned an empty response.${imageHint}`);
   }
 }
 

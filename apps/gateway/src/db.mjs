@@ -156,6 +156,24 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
     return getProject(projectId);
   }
 
+
+  function deleteProject(projectId) {
+    const project = getProject(projectId);
+    if (!project) return null;
+    // Removing a FLUX project never touches its real workspace. Conversations
+    // remain available, but lose only the association with this project.
+    database.exec("BEGIN");
+    try {
+      database.prepare("UPDATE sessions SET project_id = NULL WHERE project_id = ?").run(projectId);
+      database.prepare("DELETE FROM projects WHERE id = ?").run(projectId);
+      database.exec("COMMIT");
+    } catch (error) {
+      database.exec("ROLLBACK");
+      throw error;
+    }
+    audit("project.deleted", "project", projectId, { name: project.name, workspacePath: project.workspacePath, workspaceDeleted: false });
+    return project;
+  }
   function createSession({ projectId = null, title = "새 대화", source = "web", providerOverride = null, modelOverride = null }) {
     const session = { id: id(), projectId, title, source, providerOverride, modelOverride, createdAt: now(), updatedAt: now() };
     database.prepare("INSERT INTO sessions (id, project_id, title, source, provider_override, model_override, created_at, updated_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
@@ -275,6 +293,16 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
     database.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(now(), message.sessionId);
     audit("message.deleted", "message", messageId, { sessionId: message.sessionId, role: message.role, reason: "regenerated" });
     return message;
+  }
+
+
+  function deleteSession(sessionId) {
+    const session = getSession(sessionId);
+    if (!session) return null;
+    const attachments = database.prepare("SELECT storage_path AS storagePath FROM attachments WHERE session_id = ?").all(sessionId);
+    database.prepare("DELETE FROM sessions WHERE id = ?").run(sessionId);
+    audit("session.deleted", "session", sessionId, { title: session.title, attachmentCount: attachments.length });
+    return { session, attachments };
   }
 
   function getOrCreateDiscordSession({ channelId, userId, title }) {
@@ -418,5 +446,5 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
     audit("setting.updated", "setting", key, { key });
   }
 
-  return { close: () => database.close(), createProject, listProjects, getProject, updateProjectInstructions, createSession, listSessions, getSession, renameSession, archiveSession, updateSessionModel, searchSessions, addMessage, listMessages, createPendingAttachment, getAttachment, attachPendingAttachments, deletePendingAttachment, deleteMessage, getOrCreateDiscordSession, getSessionContext, saveSessionContext, listMemories, createMemory, updateMemory, deleteMemory, listGoals, createGoal, updateGoal, deleteGoal, createApproval, listApprovals, getApproval, decideApproval, expireApproval, listAuditEvents, getSetting, setSetting };
+  return { close: () => database.close(), createProject, listProjects, getProject, updateProjectInstructions, deleteProject, createSession, listSessions, getSession, renameSession, archiveSession, updateSessionModel, searchSessions, addMessage, listMessages, createPendingAttachment, getAttachment, attachPendingAttachments, deletePendingAttachment, deleteMessage, deleteSession, getOrCreateDiscordSession, getSessionContext, saveSessionContext, listMemories, createMemory, updateMemory, deleteMemory, listGoals, createGoal, updateGoal, deleteGoal, createApproval, listApprovals, getApproval, decideApproval, expireApproval, listAuditEvents, getSetting, setSetting };
 }
