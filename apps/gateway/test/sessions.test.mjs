@@ -129,3 +129,24 @@ test("project child conversation roles persist independently", async (context) =
   assert.equal(store.listSessions().find((session) => session.id === child.id).role, "테스트 계획을 담당한다.");
   store.close();
 });
+test("collaboration runs persist real child assignments and outcomes", async (context) => {
+  const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "flux-collaboration-runs-"));
+  context.after(() => fs.rm(dataDirectory, { recursive: true, force: true }));
+  const store = openStore(dataDirectory);
+  const project = store.createProject({ name: "team", workspacePath: "C:/work/team" });
+  const lead = store.ensureProjectLeadSession(project);
+  const child = store.createSession({ projectId: project.id, title: "검토자", role: "안전성 검토" });
+  const run = store.createCollaborationRun({ projectId: project.id, leadSessionId: lead.id, requestContent: "테스트해줘" });
+  const assignment = store.addMessage({ sessionId: child.id, role: "project_lead", content: "[프로젝트 리더 지시]\\n테스트해줘" });
+  const queued = store.createCollaborationTask({ runId: run.id, childSessionId: child.id, childName: child.title, childRole: child.role, provider: "ollama", model: "local", instructionMessageId: assignment.id });
+  const running = store.updateCollaborationTask(queued.id, { status: "running" });
+  const response = store.addMessage({ sessionId: child.id, role: "assistant", content: "검토 결과" });
+  const completed = store.updateCollaborationTask(running.id, { status: "completed", responseMessageId: response.id });
+  const finished = store.completeCollaborationRun(run.id, { status: "completed", summary: "검토자 완료" });
+  assert.equal(finished.status, "completed");
+  assert.equal(finished.tasks[0].status, "completed");
+  assert.equal(finished.tasks[0].responseMessageId, response.id);
+  assert.equal(store.listMessages(child.id)[0].role, "project_lead");
+  assert.equal(store.listCollaborationRuns(lead.id)[0].summary, "검토자 완료");
+  store.close();
+});

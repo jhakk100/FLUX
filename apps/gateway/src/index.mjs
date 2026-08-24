@@ -415,6 +415,44 @@ function sessionRoleMessage(session) {
     content: `This conversation has a user-selected role. Follow it when relevant, but it never overrides the user's current request, project instructions, approval requirements, or FLUX safety controls.\n\nAssigned role:\n${role}`,
   };
 }
+function projectCollaborationIdentityMessage(session, collaborationActive) {
+  if (!session?.projectId) return null;
+  const identity = session.projectLead ? "project lead conversation" : "child project conversation";
+  return {
+    role: "system",
+    content: [
+      "FLUX project collaboration identity (system-provided state):",
+      `This conversation is the ${identity}.`,
+      `Collaboration mode for this request: ${collaborationActive ? "active" : "inactive"}.`,
+      session.projectLead
+        ? "When collaboration is active, delegate only through FLUX-provided reports. State only outcomes supported by those reports; never invent worker activity, completion, files, or approvals."
+        : "If a message is labelled '[프로젝트 리더 지시]', it is a real assignment stored by FLUX. Perform the requested analysis and report evidence, limitations, and failures to the project leader. Do not claim file changes.",
+    ].join("\n"),
+  };
+}
+
+function collaborationProviderInfo(session) {
+  const provider = resolveSessionProvider(providerRuntime.get(), session);
+  const model = provider.provider === "ollama" ? provider.ollama.model
+    : provider.provider === "lm-studio" ? provider.lmstudio.model
+    : provider.provider === "google-ai" ? provider.googleAi.model
+    : ["factchat", "factchat-responses"].includes(provider.provider) ? provider.factchat.model
+    : ["openai-compatible", "openai-chat-compatible"].includes(provider.provider) ? provider.openai.model
+    : "";
+  return { provider: provider.provider, model };
+}
+
+function collaborationSummary(run) {
+  const elapsed = Number.isFinite(run.elapsedMs) ? `${(run.elapsedMs / 1000).toFixed(1)}초` : "진행 중";
+  const lines = [`[협업 실행 ${run.status} · ${elapsed}]`];
+  for (const task of run.tasks) {
+    const taskElapsed = Number.isFinite(task.elapsedMs) ? ` · ${(task.elapsedMs / 1000).toFixed(1)}초` : "";
+    const model = task.model ? ` · ${task.provider}/${task.model}` : task.provider ? ` · ${task.provider}` : "";
+    const detail = task.status === "failed" ? ` · 실패: ${task.error || "알 수 없는 오류"}` : "";
+    lines.push(`- ${task.childName}: ${task.status}${taskElapsed}${model}${detail}`);
+  }
+  return lines.join("\n");
+}
 function responseFormatMessage(markdownPreferred) {
   if (!markdownPreferred) return null;
   return {
@@ -482,28 +520,74 @@ async function collectProjectAgentReports({ project, agents, modelContext, contr
 }
 
 
-async function collectProjectChildReports({ project, content, controller }) {
+async function collectProjectChildReports({ project, leadSession, content, controller, onStatus = () => {} }) {
   const children = selectProjectChildSessions(store.listSessions(), project.id, MAX_PROJECT_CHILD_SESSIONS);
   if (!children.length) throw requestError("This project has no child conversations to distribute to. Create a child conversation first.");
-  const settled = await Promise.allSettled(children.map(async (child) => {
-    if (activeChatControllers.has(child.id)) throw new Error("child conversation is currently generating");
-    const history = await prepareMessagesForModel(store.listMessages(child.id));
-    const messages = [
-      { role: "system", content: "You are a child conversation in a FLUX project. Analyze the project leader's assigned request. Do not execute file tools or claim that you changed files; return a concise report for the project leader." },
-      sessionRoleMessage(child),
-      ...history,
-      { role: "user", content: `[Project leader assignment]\n${content}` },
-    ].filter(Boolean);
-    let report = "";
-    for await (const delta of streamCompletion(resolveSessionProvider(providerRuntime.get(), child), messages, { signal: controller.signal })) report += delta;
-    if (!report.trim()) throw new Error("empty response");
-    return report.trim().slice(0, 16_000);
-  }));
-  const reports = settled.map((result) => result.status === "fulfilled" ? result.value : `Child unavailable: ${redactSecret(result.reason?.message || "unknown error")}`);
-  return { selected: children.map((child) => ({ name: child.title, role: "프로젝트 하위 대화" })), reports };
-}
+  const run = store.createCollaborationRun({ projectId: project.id, leadSessionId: leadSession.id, requestContent: content });
+  onStatus({ type: "run", run });
 
-async function generateAssistantReply(session, content, { onDelta = () => {}, appendUser = true, attachmentIds = [], excludeMessageId = null, collaborate = false } = {}) {
+  const results = await Promise.all(children.map(async (child) => {
+    const providerInfo = collaborationProviderInfo(child);
+    const instruction = store.addMessage({
+      sessionId: child.id,
+      role: "project_lead",
+      content: `[프로젝트 리더 지시 · ${leadSession.title}]\n${content}`,
+    });
+    let task = store.createCollaborationTask({
+      runId: run.id,
+      childSessionId: child.id,
+      childName: child.title,
+      childRole: child.role || "",
+      provider: providerInfo.provider,
+      model: providerInfo.model || null,
+      instructionMessageId: instruction.id,
+    });
+    onStatus({ type: "task", runId: run.id, task });
+    try {
+      if (activeChatControllers.has(child.id)) throw new Error("This child conversation is currently generating its own reply.");
+      task = store.updateCollaborationTask(task.id, { status: "running" });
+      onStatus({ type: "task", runId: run.id, task });
+      const history = await prepareMessagesForModel(store.listMessages(child.id));
+      const messages = [
+        { role: "system", content: "You are a child conversation in a FLUX project. Analyze the stored project-leader assignment. Return a concise report with evidence, limitations, and failures. Do not execute file tools or claim that you changed files." },
+        projectCollaborationIdentityMessage(child, true),
+        sessionRoleMessage(child),
+        ...history,
+      ].filter(Boolean);
+      let report = "";
+      for await (const delta of streamCompletion(resolveSessionProvider(providerRuntime.get(), child), messages, { signal: controller.signal })) report += delta;
+      if (!report.trim()) throw new Error("empty response");
+      const response = store.addMessage({ sessionId: child.id, role: "assistant", content: report.trim().slice(0, 16_000) });
+      task = store.updateCollaborationTask(task.id, { status: "completed", responseMessageId: response.id });
+      onStatus({ type: "task", runId: run.id, task });
+      return { child, task, report: response.content, ok: true };
+    } catch (error) {
+      const cancelled = controller.signal.aborted;
+      task = store.updateCollaborationTask(task.id, { status: cancelled ? "cancelled" : "failed", error: redactSecret(error.message || "unknown error") });
+      onStatus({ type: "task", runId: run.id, task });
+      return { child, task, report: `Child unavailable: ${task.error || "unknown error"}`, ok: false };
+    }
+  }));
+
+  const successful = results.filter((item) => item.ok).length;
+  const status = successful === results.length ? "completed" : successful ? "partial" : controller.signal.aborted ? "cancelled" : "failed";
+  const finishedAt = Date.now();
+  const summary = collaborationSummary({
+    ...run,
+    status,
+    elapsedMs: Math.max(0, finishedAt - Date.parse(run.startedAt)),
+    tasks: results.map(({ task }) => task),
+  });
+  const finished = store.completeCollaborationRun(run.id, { status, summary });
+  store.addMessage({ sessionId: leadSession.id, role: "system", content: summary });
+  onStatus({ type: "run", run: finished });
+  return {
+    selected: results.map(({ child }) => ({ name: child.title, role: child.role || "프로젝트 하위 대화" })),
+    reports: results.map(({ report }) => report),
+    run: finished,
+  };
+}
+async function generateAssistantReply(session, content, { onDelta = () => {}, onCollaboration = () => {}, appendUser = true, attachmentIds = [], excludeMessageId = null, collaborate = false } = {}) {
   if (session.archivedAt) throw requestError("Archived sessions must be restored before sending a message.", 409);
   if (activeChatControllers.has(session.id)) throw requestError("This session already has an active generation.", 409);
   if (appendUser) {
@@ -532,11 +616,11 @@ async function generateAssistantReply(session, content, { onDelta = () => {}, ap
   const controller = new AbortController();
   activeChatControllers.set(session.id, controller);
   try {
-    const conversation = [responseFormat, agentInstructions, instruction, sessionRoleMessage(session), workspace, fileTools, memory, goals, notion, modelContext.summaryMessage, ...modelContext.activeMessages].filter(Boolean);
+    const conversation = [responseFormat, agentInstructions, instruction, projectCollaborationIdentityMessage(session, collaborate), sessionRoleMessage(session), workspace, fileTools, memory, goals, notion, modelContext.summaryMessage, ...modelContext.activeMessages].filter(Boolean);
     if (collaborate) {
       if (!project) throw requestError("Collaboration is available only in a project conversation.");
       const collaboration = session.projectLead
-        ? await collectProjectChildReports({ project, content, controller })
+        ? await collectProjectChildReports({ project, leadSession: session, content, controller, onStatus: onCollaboration })
         : await collectProjectAgentReports({ project, agents: store.listProjectAgents(project.id), modelContext, controller });
       conversation.push(projectAgentReportMessage(collaboration.selected, collaboration.reports));
     }
@@ -1069,7 +1153,13 @@ async function handle(request, response) {
     if (!store.getSession(sessionMessagesMatch[1])) return json(response, 404, { error: "Session not found." });
     return json(response, 200, store.listMessages(sessionMessagesMatch[1]).map(publicMessage));
   }
-  const sessionContextMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/context$/);
+  const collaborationRunsMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/collaboration-runs$/);
+  if (collaborationRunsMatch && request.method === "GET") {
+    const session = store.getSession(collaborationRunsMatch[1]);
+    if (!session) return json(response, 404, { error: "Session not found." });
+    if (!session.projectLead) return json(response, 200, []);
+    return json(response, 200, store.listCollaborationRuns(session.id, 20));
+  }  const sessionContextMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/context$/);
   if (sessionContextMatch && request.method === "GET") {
     const session = store.getSession(sessionContextMatch[1]);
     if (!session) return json(response, 404, { error: "Session not found." });
@@ -1094,7 +1184,7 @@ async function handle(request, response) {
     if (attachmentIds.some((attachmentId) => { const attachment = store.getAttachment(attachmentId); return !attachment || attachment.sessionId !== session.id || attachment.messageId; })) return json(response, 400, { error: "One or more attachments are unavailable for this message." });
     response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", connection: "keep-alive" });
     try {
-      const result = await generateAssistantReply(session, String(body.content ?? ""), { attachmentIds, collaborate: body.collaborate === true, onDelta: (delta) => sse(response, "delta", { text: delta }) });
+      const result = await generateAssistantReply(session, String(body.content ?? ""), { attachmentIds, collaborate: body.collaborate === true, onDelta: (delta) => sse(response, "delta", { text: delta }), onCollaboration: (event) => sse(response, "collaboration", event) });
       sse(response, "done", result);
     } catch (error) {
       sse(response, "error", { error: redactSecret(error.message) });

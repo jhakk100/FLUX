@@ -123,6 +123,35 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS collaboration_runs (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      lead_session_id TEXT NOT NULL,
+      request_content TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'running',
+      started_at TEXT NOT NULL,
+      completed_at TEXT,
+      elapsed_ms INTEGER,
+      summary TEXT NOT NULL DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS collaboration_runs_lead_idx ON collaboration_runs (lead_session_id, started_at DESC);
+    CREATE TABLE IF NOT EXISTS collaboration_tasks (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES collaboration_runs(id) ON DELETE CASCADE,
+      child_session_id TEXT NOT NULL,
+      child_name TEXT NOT NULL,
+      child_role TEXT NOT NULL DEFAULT '',
+      provider TEXT,
+      model TEXT,
+      instruction_message_id TEXT,
+      response_message_id TEXT,
+      status TEXT NOT NULL DEFAULT 'queued',
+      error TEXT NOT NULL DEFAULT '',
+      started_at TEXT,
+      completed_at TEXT,
+      elapsed_ms INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS collaboration_tasks_run_idx ON collaboration_tasks (run_id, child_session_id);
   `);
   const sessionColumns = database.prepare("PRAGMA table_info(sessions)").all();
   if (!sessionColumns.some((column) => column.name === "archived_at")) {
@@ -481,6 +510,76 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
     return true;
   }
 
+  function publicCollaborationTask(task) {
+    return {
+      id: task.id,
+      runId: task.runId,
+      childSessionId: task.childSessionId,
+      childName: task.childName,
+      childRole: task.childRole,
+      provider: task.provider,
+      model: task.model,
+      instructionMessageId: task.instructionMessageId,
+      responseMessageId: task.responseMessageId,
+      status: task.status,
+      error: task.error,
+      startedAt: task.startedAt,
+      completedAt: task.completedAt,
+      elapsedMs: task.elapsedMs,
+    };
+  }
+
+  function getCollaborationRun(runId) {
+    const run = database.prepare("SELECT id, project_id AS projectId, lead_session_id AS leadSessionId, request_content AS requestContent, status, started_at AS startedAt, completed_at AS completedAt, elapsed_ms AS elapsedMs, summary FROM collaboration_runs WHERE id = ?").get(runId);
+    if (!run) return null;
+    const tasks = database.prepare("SELECT id, run_id AS runId, child_session_id AS childSessionId, child_name AS childName, child_role AS childRole, provider, model, instruction_message_id AS instructionMessageId, response_message_id AS responseMessageId, status, error, started_at AS startedAt, completed_at AS completedAt, elapsed_ms AS elapsedMs FROM collaboration_tasks WHERE run_id = ? ORDER BY rowid ASC").all(runId).map(publicCollaborationTask);
+    return { ...run, tasks };
+  }
+
+  function createCollaborationRun({ projectId, leadSessionId, requestContent }) {
+    const run = { id: id(), projectId, leadSessionId, requestContent, status: "running", startedAt: now() };
+    database.prepare("INSERT INTO collaboration_runs (id, project_id, lead_session_id, request_content, status, started_at, completed_at, elapsed_ms, summary) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(run.id, run.projectId, run.leadSessionId, run.requestContent, run.status, run.startedAt, null, null, "");
+    audit("collaboration.run_started", "collaboration_run", run.id, { projectId, leadSessionId });
+    return getCollaborationRun(run.id);
+  }
+
+  function createCollaborationTask({ runId, childSessionId, childName, childRole = "", provider = null, model = null, instructionMessageId = null }) {
+    const task = { id: id(), runId, childSessionId, childName, childRole, provider, model, instructionMessageId, status: "queued" };
+    database.prepare("INSERT INTO collaboration_tasks (id, run_id, child_session_id, child_name, child_role, provider, model, instruction_message_id, response_message_id, status, error, started_at, completed_at, elapsed_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(task.id, task.runId, task.childSessionId, task.childName, task.childRole, task.provider, task.model, task.instructionMessageId, null, task.status, "", null, null, null);
+    audit("collaboration.task_queued", "collaboration_task", task.id, { runId, childSessionId, childName });
+    return getCollaborationRun(runId).tasks.find((item) => item.id === task.id);
+  }
+
+  function updateCollaborationTask(taskId, { status, error, responseMessageId } = {}) {
+    const existing = database.prepare("SELECT id, run_id AS runId, status, started_at AS startedAt FROM collaboration_tasks WHERE id = ?").get(taskId);
+    if (!existing) return null;
+    const nextStatus = status ?? existing.status;
+    const starts = nextStatus === "running" && !existing.startedAt ? now() : existing.startedAt;
+    const finishes = ["completed", "failed", "cancelled"].includes(nextStatus) ? now() : null;
+    const elapsed = finishes && starts ? Math.max(0, Date.parse(finishes) - Date.parse(starts)) : null;
+    database.prepare("UPDATE collaboration_tasks SET status = ?, error = ?, response_message_id = ?, started_at = ?, completed_at = ?, elapsed_ms = ? WHERE id = ?")
+      .run(nextStatus, error ?? "", responseMessageId ?? null, starts, finishes, elapsed, taskId);
+    audit(`collaboration.task_${nextStatus}`, "collaboration_task", taskId, { runId: existing.runId, error: Boolean(error) });
+    return getCollaborationRun(existing.runId).tasks.find((item) => item.id === taskId);
+  }
+
+  function completeCollaborationRun(runId, { status, summary = "" }) {
+    const existing = getCollaborationRun(runId);
+    if (!existing) return null;
+    const completedAt = now();
+    const elapsedMs = Math.max(0, Date.parse(completedAt) - Date.parse(existing.startedAt));
+    database.prepare("UPDATE collaboration_runs SET status = ?, completed_at = ?, elapsed_ms = ?, summary = ? WHERE id = ?")
+      .run(status, completedAt, elapsedMs, summary, runId);
+    audit(`collaboration.run_${status}`, "collaboration_run", runId, { taskCount: existing.tasks.length, elapsedMs });
+    return getCollaborationRun(runId);
+  }
+
+  function listCollaborationRuns(leadSessionId, limit = 20) {
+    return database.prepare("SELECT id FROM collaboration_runs WHERE lead_session_id = ? ORDER BY started_at DESC LIMIT ?").all(leadSessionId, limit)
+      .map((row) => getCollaborationRun(row.id));
+  }
   function createApproval({ action, risk, target, preview, payload }) {
     const approval = { id: id(), action, risk, target, preview, payload, status: "pending", createdAt: now() };
     database.prepare("INSERT INTO approvals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
@@ -534,5 +633,5 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
     audit("setting.updated", "setting", key, { key });
   }
 
-  return { close: () => database.close(), createProject, listProjects, getProject, updateProjectInstructions, listProjectAgents, getProjectAgent, createProjectAgent, updateProjectAgent, deleteProjectAgent, deleteProject, createSession, listSessions, countProjectChildSessions, getProjectLeadSession, ensureProjectLeadSession, getSession, renameSession, archiveSession, updateSessionModel, updateSessionRole, searchSessions, addMessage, listMessages, createPendingAttachment, getAttachment, attachPendingAttachments, deletePendingAttachment, deleteMessage, deleteSession, getOrCreateDiscordSession, getSessionContext, saveSessionContext, listMemories, createMemory, updateMemory, deleteMemory, listGoals, createGoal, updateGoal, deleteGoal, createApproval, listApprovals, getApproval, decideApproval, expireApproval, listAuditEvents, getSetting, setSetting };
+  return { close: () => database.close(), createProject, listProjects, getProject, updateProjectInstructions, listProjectAgents, getProjectAgent, createProjectAgent, updateProjectAgent, deleteProjectAgent, deleteProject, createSession, listSessions, countProjectChildSessions, getProjectLeadSession, ensureProjectLeadSession, getSession, renameSession, archiveSession, updateSessionModel, updateSessionRole, searchSessions, addMessage, listMessages, createPendingAttachment, getAttachment, attachPendingAttachments, deletePendingAttachment, deleteMessage, deleteSession, getOrCreateDiscordSession, getSessionContext, saveSessionContext, listMemories, createMemory, updateMemory, deleteMemory, listGoals, createGoal, updateGoal, deleteGoal, createCollaborationRun, createCollaborationTask, updateCollaborationTask, completeCollaborationRun, getCollaborationRun, listCollaborationRuns, createApproval, listApprovals, getApproval, decideApproval, expireApproval, listAuditEvents, getSetting, setSetting };
 }
