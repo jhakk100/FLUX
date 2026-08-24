@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { isSea } from "node:sea";
@@ -8,20 +9,27 @@ import { isSea } from "node:sea";
 const execFileAsync = promisify(execFile);
 const REGISTRATION_FILE = "cli-path-registration.json";
 
-function comparablePath(value) {
-  return String(value ?? "").trim().replace(/^"|"$/g, "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+function comparablePath(value, { caseInsensitive = true } = {}) {
+  const normalized = String(value ?? "").trim().replace(/^"|"$/g, "").replace(/\\/g, "/").replace(/\/+$/, "");
+  return caseInsensitive ? normalized.toLowerCase() : normalized;
 }
 
-export function addPathEntry(currentPath, entry) {
-  const entries = String(currentPath ?? "").split(";").map((value) => value.trim()).filter(Boolean);
-  if (entries.some((value) => comparablePath(value) === comparablePath(entry))) return entries.join(";");
-  return [...entries, entry].join(";");
+export function addPathEntry(currentPath, entry, { separator = ";", caseInsensitive = separator === ";" } = {}) {
+  const entries = String(currentPath ?? "").split(separator).map((value) => value.trim()).filter(Boolean);
+  if (entries.some((value) => comparablePath(value, { caseInsensitive }) === comparablePath(entry, { caseInsensitive }))) return entries.join(separator);
+  return [...entries, entry].join(separator);
 }
 
 export function createWindowsCommandShim(executablePath) {
   if (!path.isAbsolute(executablePath)) throw new Error("FLUX executable path must be absolute.");
   if (executablePath.includes('"')) throw new Error("FLUX executable path cannot contain a quote.");
   return `@echo off\r\nset "NODE_NO_WARNINGS=1"\r\n"${executablePath}" cli %*\r\n`;
+}
+
+export function createLinuxCommandShim(executablePath) {
+  if (!path.isAbsolute(executablePath)) throw new Error("FLUX executable path must be absolute.");
+  if (executablePath.includes("'")) throw new Error("FLUX executable path cannot contain a single quote.");
+  return `#!/bin/sh\nexec '${executablePath}' cli "$@"\n`;
 }
 
 async function readUserPath() {
@@ -38,11 +46,39 @@ async function writeUserPath(value) {
   });
 }
 
-export async function ensureFluxCommand({ dataDirectory, executablePath = process.execPath, packaged = isSea(), platform = process.platform } = {}) {
-  if (platform !== "win32") return { installed: false, reason: "Windows에서만 PATH 등록을 지원합니다." };
+async function ensureLinuxUserPath({ binDirectory, homeDirectory, environmentPath }) {
+  const currentPath = environmentPath ?? process.env.PATH ?? "";
+  if (addPathEntry(currentPath, binDirectory, { separator: ":", caseInsensitive: false }) === currentPath) {
+    return { pathUpdated: false, startupFile: null };
+  }
+  const marker = "# FLUX CLI PATH";
+  const pathLine = 'export PATH="$HOME/.local/bin:$PATH"';
+  const candidates = [".profile", ".bashrc", ".zshrc"].map((name) => path.join(homeDirectory, name));
+  let startupFile = candidates[0];
+  for (const candidate of candidates) {
+    try { await fs.access(candidate); startupFile = candidate; break; } catch { /* Try the next common shell startup file. */ }
+  }
+  let existing = "";
+  try { existing = await fs.readFile(startupFile, "utf8"); } catch (error) { if (error.code !== "ENOENT") throw error; }
+  if (!existing.includes(marker)) await fs.appendFile(startupFile, `${existing && !existing.endsWith("\n") ? "\n" : ""}${marker}\n${pathLine}\n`, "utf8");
+  return { pathUpdated: true, startupFile };
+}
+
+export async function ensureFluxCommand({ dataDirectory, executablePath = process.execPath, packaged = isSea(), platform = process.platform, homeDirectory = os.homedir(), environmentPath } = {}) {
   if (!packaged) return { installed: false, reason: "개발용 Node 실행은 PATH에 등록하지 않습니다." };
   if (!dataDirectory) throw new Error("FLUX data directory is required to install the CLI command.");
 
+  if (platform === "linux") {
+    const binDirectory = path.join(path.resolve(homeDirectory), ".local", "bin");
+    const commandPath = path.join(binDirectory, "flux");
+    await fs.mkdir(binDirectory, { recursive: true });
+    await fs.writeFile(commandPath, createLinuxCommandShim(path.resolve(executablePath)), { encoding: "utf8", mode: 0o755 });
+    await fs.chmod(commandPath, 0o755);
+    const pathResult = await ensureLinuxUserPath({ binDirectory, homeDirectory: path.resolve(homeDirectory), environmentPath });
+    return { installed: true, commandPath, binDirectory, ...pathResult };
+  }
+
+  if (platform !== "win32") return { installed: false, reason: "Windows와 Linux에서만 PATH 등록을 지원합니다." };
   const binDirectory = path.join(path.resolve(dataDirectory), "bin");
   const commandPath = path.join(binDirectory, "flux.cmd");
   await fs.mkdir(binDirectory, { recursive: true });
@@ -79,7 +115,7 @@ export async function registerFluxCommandOnFirstLaunch({ dataDirectory, register
   try {
     const result = await register({ dataDirectory });
     const state = result.installed ? "ready" : "failed";
-    const registration = { automaticAttempted: true, state, message: result.installed ? "flux 명령이 사용자 PATH에 등록되었습니다. 새 터미널에서 사용할 수 있습니다." : result.reason ?? "CLI PATH 자동 등록에 실패했습니다." };
+    const registration = { automaticAttempted: true, state, message: result.installed ? "flux 명령을 등록했습니다. 새 터미널에서 사용할 수 있습니다." : result.reason ?? "CLI PATH 자동 등록에 실패했습니다." };
     await saveFluxCommandRegistration(dataDirectory, registration);
     return registration;
   } catch (error) {
@@ -92,7 +128,7 @@ export async function registerFluxCommandOnFirstLaunch({ dataDirectory, register
 export async function registerFluxCommandManually({ dataDirectory } = {}) {
   try {
     const result = await ensureFluxCommand({ dataDirectory });
-    const registration = { automaticAttempted: true, state: result.installed ? "ready" : "failed", message: result.installed ? "flux 명령을 사용자 PATH에 등록했습니다. 새 터미널에서 사용할 수 있습니다." : result.reason ?? "CLI PATH 등록에 실패했습니다.", commandPath: result.commandPath ?? null, pathUpdated: Boolean(result.pathUpdated) };
+    const registration = { automaticAttempted: true, state: result.installed ? "ready" : "failed", message: result.installed ? "flux 명령을 등록했습니다. 새 터미널에서 사용할 수 있습니다." : result.reason ?? "CLI PATH 등록에 실패했습니다.", commandPath: result.commandPath ?? null, pathUpdated: Boolean(result.pathUpdated) };
     await saveFluxCommandRegistration(dataDirectory, registration);
     return registration;
   } catch (error) {

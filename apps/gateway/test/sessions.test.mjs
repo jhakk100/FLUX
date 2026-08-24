@@ -150,3 +150,21 @@ test("collaboration runs persist real child assignments and outcomes", async (co
   assert.equal(store.listCollaborationRuns(lead.id)[0].summary, "검토자 완료");
   store.close();
 });
+
+test("per-conversation rate limits and applied file provenance persist", async (context) => {
+  const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "flux-rate-and-provenance-"));
+  context.after(() => fs.rm(dataDirectory, { recursive: true, force: true }));
+  const store = openStore(dataDirectory);
+  const project = store.createProject({ name: "workspace", workspacePath: "C:/work/workspace" });
+  const session = store.createSession({ projectId: project.id, title: "제한 대화" });
+  const updated = store.updateSessionRateLimit(session.id, { requestsPerMinute: 3, minIntervalSeconds: 12 });
+  assert.equal(updated.requestsPerMinute, 3);
+  assert.equal(store.getSession(session.id).minIntervalSeconds, 12);
+  const record = store.recordFileProvenance({
+    approvalId: "approval-1", projectId: project.id, relativePath: "src/example.js", action: "create-file",
+    source: "assistant", sessionId: session.id, collaborationRunId: "run-1", provider: "ollama", model: "test-model", debugMarker: true, resultingHash: "abc",
+  });
+  assert.equal(store.listFileProvenance(project.id)[0].id, record.id);
+  assert.equal(store.listFileProvenance(project.id)[0].debugMarker, true);
+  store.close();
+});

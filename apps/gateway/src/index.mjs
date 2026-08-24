@@ -27,7 +27,7 @@ const cliMode = isCliInvocation();
 let cliRegistration = { automaticAttempted: false, state: "checking", message: "CLI PATH 등록 상태를 확인 중입니다." };
 const cliRegistrationReady = getFluxCommandRegistration(config.dataDirectory).then(async (existing) => {
   cliRegistration = existing;
-  if (!cliMode && isSea()) {
+  if (isSea()) {
     cliRegistration = await registerFluxCommandOnFirstLaunch({ dataDirectory: config.dataDirectory });
     if (cliRegistration.state === "ready") console.log("FLUX CLI command registered. Open a new terminal and run: flux --help");
     if (cliRegistration.state === "failed") console.warn(`FLUX CLI command registration failed: ${cliRegistration.message}`);
@@ -39,6 +39,8 @@ const cliRegistrationReady = getFluxCommandRegistration(config.dataDirectory).th
 });
 const dashboardPath = path.resolve(process.cwd(), "apps/dashboard/index.html");
 const activeChatControllers = new Map();
+const activeChatRequests = new Map();
+const sessionRequestTimes = new Map();
 let discordBot = { status: () => ({ ...discordStatus(config.discord), connected: false }) };
 
 async function loadDashboard() {
@@ -134,6 +136,49 @@ function requestError(message, statusCode = 400) {
   return error;
 }
 
+function sessionRateLimit(session) {
+  return {
+    requestsPerMinute: Number(session?.requestsPerMinute ?? 0),
+    minIntervalSeconds: Number(session?.minIntervalSeconds ?? 0),
+  };
+}
+
+function validateSessionRateLimit({ requestsPerMinute, minIntervalSeconds }) {
+  if (!Number.isInteger(requestsPerMinute) || requestsPerMinute < 0 || requestsPerMinute > 60) throw requestError("requestsPerMinute must be an integer from 0 to 60.");
+  if (!Number.isInteger(minIntervalSeconds) || minIntervalSeconds < 0 || minIntervalSeconds > 3_600) throw requestError("minIntervalSeconds must be an integer from 0 to 3600.");
+  return { requestsPerMinute, minIntervalSeconds };
+}
+
+function consumeSessionRequestAllowance(session) {
+  const { requestsPerMinute, minIntervalSeconds } = sessionRateLimit(session);
+  if (!requestsPerMinute && !minIntervalSeconds) return;
+  const now = Date.now();
+  const previous = (sessionRequestTimes.get(session.id) ?? []).filter((timestamp) => timestamp > now - 60_000);
+  const last = previous.at(-1);
+  if (minIntervalSeconds && last && now - last < minIntervalSeconds * 1_000) {
+    const retryAfterSeconds = Math.ceil((minIntervalSeconds * 1_000 - (now - last)) / 1_000);
+    throw requestError(`This conversation can send again in ${retryAfterSeconds} seconds.`, 429);
+  }
+  if (requestsPerMinute && previous.length >= requestsPerMinute) {
+    const retryAfterSeconds = Math.max(1, Math.ceil((previous[0] + 60_000 - now) / 1_000));
+    throw requestError(`This conversation reached its ${requestsPerMinute} requests-per-minute limit. Try again in ${retryAfterSeconds} seconds.`, 429);
+  }
+  previous.push(now);
+  sessionRequestTimes.set(session.id, previous);
+}
+
+function fileProvenanceDebugEnabled() {
+  return store.getSetting("file-provenance-debug") === true;
+}
+
+function expirePendingApprovalsForSession(sessionId, reason) {
+  let expired = 0;
+  for (const summary of store.listApprovals().filter((approval) => approval.status === "pending")) {
+    const approval = store.getApproval(summary.id);
+    if (approval?.payload?.provenance?.sessionId === sessionId && store.expireApproval(approval.id, reason)) expired += 1;
+  }
+  return expired;
+}
 function safeAttachmentName(value) {
   const name = path.basename(String(value ?? "attachment")).replace(/[\u0000-\u001f<>:"/\\|?*]/g, "_").trim();
   return (name || "attachment").slice(0, 180);
@@ -312,9 +357,48 @@ function fileAgentToolsMessage(project) {
   };
 }
 
-async function createFileChangeRequest({ project, action, relativePath, content, origin = "user" }) {
+function debugCommentPrefix(relativePath) {
+  const extension = path.extname(relativePath).toLocaleLowerCase();
+  if ([".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".java", ".c", ".cc", ".cpp", ".h", ".hpp", ".go", ".rs", ".php"].includes(extension)) return "//";
+  if ([".py", ".rb", ".sh", ".ps1", ".yml", ".yaml"].includes(extension)) return "#";
+  if ([".sql"].includes(extension)) return "--";
+  if ([".css"].includes(extension)) return "/*";
+  if ([".html", ".htm", ".xml", ".svg"].includes(extension)) return "<!--";
+  return null;
+}
+
+function addDebugProvenanceMarker(relativePath, content, provenance) {
+  const prefix = debugCommentPrefix(relativePath);
+  if (!prefix || !provenance?.sessionId) return { content, debugMarker: false };
+  const provider = String(provenance.provider || "model").replace(/[^a-zA-Z0-9_.-]/g, "_").slice(0, 64);
+  const model = String(provenance.model || "default").replace(/[^a-zA-Z0-9_.:-]/g, "_").slice(0, 96);
+  const run = provenance.collaborationRunId ? ` · run ${String(provenance.collaborationRunId).slice(0, 8)}` : "";
+  const marker = prefix === "/*" ? `/* FLUX provenance (generated change): ${provider}/${model} · session ${String(provenance.sessionId).slice(0, 8)}${run} */`
+    : prefix === "<!--" ? `<!-- FLUX provenance (generated change): ${provider}/${model} · session ${String(provenance.sessionId).slice(0, 8)}${run} -->`
+    : `${prefix} FLUX provenance (generated change): ${provider}/${model} · session ${String(provenance.sessionId).slice(0, 8)}${run}`;
+  if (content.startsWith(marker)) return { content, debugMarker: true };
+  let insertionPoint = 0;
+  // Preserve executable shebangs and Python source-encoding declarations. A debug
+  // marker before either would change how the operating system or Python reads it.
+  if (prefix === "#") {
+    const firstLineEnd = content.indexOf("\n");
+    if (content.startsWith("#!") && firstLineEnd >= 0) insertionPoint = firstLineEnd + 1;
+    const encodingLineEnd = content.indexOf("\n", insertionPoint);
+    const encodingLine = content.slice(insertionPoint, encodingLineEnd >= 0 ? encodingLineEnd : content.length);
+    if (/^\s*#.*coding[:=]/i.test(encodingLine)) insertionPoint = encodingLineEnd >= 0 ? encodingLineEnd + 1 : content.length;
+  }
+  return { content: `${content.slice(0, insertionPoint)}${marker}\n${content.slice(insertionPoint)}`, debugMarker: true };
+}
+
+async function createFileChangeRequest({ project, action, relativePath, content, origin = "user", provenance = {} }) {
   if (!['create-file', 'modify-file', 'delete-file'].includes(action)) throw requestError("Unsupported change action.");
   if (typeof relativePath !== "string" || !relativePath.trim() || (action !== "delete-file" && typeof content !== "string")) throw requestError("relativePath and content are required.");
+  const resolvedProvenance = { source: origin, ...provenance, debugMarker: false };
+  if (typeof content === "string" && fileProvenanceDebugEnabled() && resolvedProvenance.sessionId) {
+    const marked = addDebugProvenanceMarker(relativePath, content, resolvedProvenance);
+    content = marked.content;
+    resolvedProvenance.debugMarker = marked.debugMarker;
+  }
   if (typeof content === "string" && Buffer.byteLength(content, "utf8") > MAX_WRITE_BYTES) throw requestError("File content must be at most 1 MiB.", 413);
   const absoluteTarget = action === "create-file"
     ? await resolveNewWorkspacePath(project, relativePath)
@@ -336,15 +420,17 @@ async function createFileChangeRequest({ project, action, relativePath, content,
     risk: classifyAction(action),
     target: absoluteTarget,
     preview,
-    payload: { projectId: project.id, relativePath, content: content ?? "", expectedHash: action === "create-file" ? null : contentHash(current.content), origin },
+    payload: { projectId: project.id, relativePath, content: content ?? "", expectedHash: action === "create-file" ? null : contentHash(current.content), origin, provenance: resolvedProvenance },
   });
   if (requiresInteractiveFileApproval(action, fileApprovalMode())) return { approval, automated: false };
   const result = await executeApprovedAction(approval, "");
   return { approval: store.decideApproval(approval.id, "approved"), result, automated: true };
 }
 
-async function runFileTool(project, call) {
+async function runFileTool(project, call, { session = null, collaborationRunId = null } = {}) {
   if (!project) throw requestError("A FLUX project is required for file tools.");
+  const provider = session ? collaborationProviderInfo(session) : { provider: null, model: null };
+  const provenance = { source: "assistant", sessionId: session?.id ?? null, collaborationRunId, provider: provider.provider, model: provider.model };
   if (!['list-files', 'read-file', 'search-files', 'create-file', 'modify-file', 'delete-file', 'patch-file'].includes(call.action)) throw requestError("Unsupported FLUX file tool.");
   if (call.action === "list-files") {
     const directory = await resolveExistingWorkspacePath(project, call.path || ".");
@@ -369,10 +455,10 @@ async function runFileTool(project, call) {
     let content;
     try { content = applyUniqueTextPatch(current.content, call.find, call.replace); } catch (error) { throw requestError(error.message); }
     if (Buffer.byteLength(content, "utf8") > MAX_WRITE_BYTES) throw requestError("Patched file content must be at most 1 MiB.", 413);
-    const change = await createFileChangeRequest({ project, action: "modify-file", relativePath: call.path, content, origin: "assistant-patch" });
+    const change = await createFileChangeRequest({ project, action: "modify-file", relativePath: call.path, content, origin: "assistant-patch", provenance: { ...provenance, source: "assistant-patch" } });
     return { action: "modify-file", patch: true, path: call.path, automated: change.automated, approvalId: change.approval.id, status: change.automated ? "applied" : "awaiting-user-approval" };
   }
-  const change = await createFileChangeRequest({ project, action: call.action, relativePath: call.path, content: call.content, origin: "assistant" });
+  const change = await createFileChangeRequest({ project, action: call.action, relativePath: call.path, content: call.content, origin: "assistant", provenance });
   return { action: call.action, path: call.path, automated: change.automated, approvalId: change.approval.id, status: change.automated ? "applied" : "awaiting-user-approval" };
 }
 
@@ -614,14 +700,18 @@ async function generateAssistantReply(session, content, { onDelta = () => {}, on
   const fileTools = fileAgentToolsMessage(project);
   let fullText = "";
   const controller = new AbortController();
+  const activeRequest = { controller, immediateInstruction: null };
   activeChatControllers.set(session.id, controller);
+  activeChatRequests.set(session.id, activeRequest);
   try {
     const conversation = [responseFormat, agentInstructions, instruction, projectCollaborationIdentityMessage(session, collaborate), sessionRoleMessage(session), workspace, fileTools, memory, goals, notion, modelContext.summaryMessage, ...modelContext.activeMessages].filter(Boolean);
+    let collaborationRunId = null;
     if (collaborate) {
       if (!project) throw requestError("Collaboration is available only in a project conversation.");
       const collaboration = session.projectLead
         ? await collectProjectChildReports({ project, leadSession: session, content, controller, onStatus: onCollaboration })
         : await collectProjectAgentReports({ project, agents: store.listProjectAgents(project.id), modelContext, controller });
+      collaborationRunId = collaboration.run?.id ?? null;
       conversation.push(projectAgentReportMessage(collaboration.selected, collaboration.reports));
     }
     for (let toolTurns = 0; toolTurns < 6; toolTurns += 1) {
@@ -636,7 +726,7 @@ async function generateAssistantReply(session, content, { onDelta = () => {}, on
       }
       const results = [];
       try {
-        for (const toolCall of toolCalls) results.push(await runFileTool(project, toolCall));
+        for (const toolCall of toolCalls) results.push(await runFileTool(project, toolCall, { session, collaborationRunId }));
         const changes = results.filter((result) => ["create-file", "modify-file", "delete-file"].includes(result.action));
         if (changes.length) {
           const applied = changes.filter((result) => result.automated).length;
@@ -652,17 +742,18 @@ async function generateAssistantReply(session, content, { onDelta = () => {}, on
       }
     }
     if (!fullText && !controller.signal.aborted) {
-      fullText = "I reached the FLUX file-tool turn limit before producing a final answer. Please review the completed actions and continue with a more specific request.";
+      fullText = "선택한 모델이 같은 파일 작업 요청을 반복하여 안전상 중지했습니다. 이미 적용된 변경과 승인 요청은 유지됩니다. 현재 파일 상태를 확인한 뒤, 필요한 작업을 더 구체적으로 다시 요청해 주세요.";
       onDelta(fullText);
     }
     return { message: store.addMessage({ sessionId: session.id, role: "assistant", content: fullText }), cancelled: false };
   } catch (error) {
-    if (controller.signal.aborted) return { message: fullText ? store.addMessage({ sessionId: session.id, role: "assistant", content: fullText }) : null, cancelled: true };
+    if (controller.signal.aborted) return { message: fullText && !activeRequest.immediateInstruction ? store.addMessage({ sessionId: session.id, role: "assistant", content: fullText }) : null, cancelled: true, immediateInstruction: activeRequest.immediateInstruction };
     const failureMessage = `응답 생성 실패: ${redactSecret(error.message ?? "알 수 없는 오류")}`;
     onDelta(failureMessage);
     return { message: store.addMessage({ sessionId: session.id, role: "assistant", content: failureMessage }), cancelled: false };
   } finally {
-    activeChatControllers.delete(session.id);
+    if (activeChatControllers.get(session.id) === controller) activeChatControllers.delete(session.id);
+    if (activeChatRequests.get(session.id) === activeRequest) activeChatRequests.delete(session.id);
   }
 }
 
@@ -772,6 +863,21 @@ async function executeApprovedAction(approval, confirmationTarget) {
     error.statusCode = 400;
     throw error;
   }
+  const provenance = approval.payload.provenance ?? { source: approval.payload.origin ?? "user" };
+  const resultingHash = approval.action === "delete-file" ? null : contentHash(approval.payload.content ?? "");
+  store.recordFileProvenance({
+    approvalId: approval.id,
+    projectId: approval.payload.projectId,
+    relativePath: approval.payload.relativePath,
+    action: approval.action,
+    source: provenance.source ?? approval.payload.origin ?? "user",
+    sessionId: provenance.sessionId ?? null,
+    collaborationRunId: provenance.collaborationRunId ?? null,
+    provider: provenance.provider ?? null,
+    model: provenance.model ?? null,
+    debugMarker: provenance.debugMarker === true,
+    resultingHash,
+  });
   return { action: approval.action, target };
 }
 
@@ -911,6 +1017,15 @@ async function handle(request, response) {
     store.setSetting("file-approval-mode", body.mode);
     return json(response, 200, { mode: body.mode });
   }
+  if (url.pathname === "/api/file-provenance-settings" && request.method === "GET") {
+    return json(response, 200, { debugMarkerEnabled: fileProvenanceDebugEnabled() });
+  }
+  if (url.pathname === "/api/file-provenance-settings" && request.method === "PUT") {
+    const body = await readJson(request);
+    if (typeof body.debugMarkerEnabled !== "boolean") return json(response, 400, { error: "debugMarkerEnabled must be a boolean." });
+    store.setSetting("file-provenance-debug", body.debugMarkerEnabled);
+    return json(response, 200, { debugMarkerEnabled: body.debugMarkerEnabled });
+  }
   if (url.pathname === "/api/goals" && request.method === "GET") return json(response, 200, store.listGoals());
   if (url.pathname === "/api/goals" && request.method === "POST") {
     const body = await readJson(request);
@@ -994,6 +1109,11 @@ async function handle(request, response) {
       }));
     files.sort((left, right) => left.kind.localeCompare(right.kind) || left.name.localeCompare(right.name));
     return json(response, 200, { path: path.relative(await fs.realpath(project.workspacePath), directory) || ".", entries: files });
+  }
+  const projectProvenanceMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/file-provenance$/);
+  if (projectProvenanceMatch && request.method === "GET") {
+    requireProject(projectProvenanceMatch[1]);
+    return json(response, 200, store.listFileProvenance(projectProvenanceMatch[1], 100));
   }
   const projectFileMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/file$/);
   if (projectFileMatch && request.method === "GET") {
@@ -1098,19 +1218,24 @@ async function handle(request, response) {
     const session = store.getSession(sessionModelMatch[1]);
     if (!session) return json(response, 404, { error: "Session not found." });
     const effective = resolveSessionProvider(providerRuntime.get(), session);
-    return json(response, 200, { providerOverride: session.providerOverride, modelOverride: session.modelOverride, effective: providerStatus(effective) });
+    return json(response, 200, { providerOverride: session.providerOverride, modelOverride: session.modelOverride, rateLimit: sessionRateLimit(session), effective: providerStatus(effective) });
   }
   if (sessionModelMatch && request.method === "PUT") {
     const body = await readJson(request);
+    const current = store.getSession(sessionModelMatch[1]);
+    if (!current) return json(response, 404, { error: "Session not found." });
     const providerOverride = body.providerOverride == null || body.providerOverride === "" ? null : String(body.providerOverride).trim();
     const modelOverride = body.modelOverride == null || body.modelOverride === "" ? null : String(body.modelOverride).trim();
     if (providerOverride && providerOverride.length > 80) return json(response, 400, { error: "providerOverride is too long." });
     if (modelOverride && modelOverride.length > 240) return json(response, 400, { error: "modelOverride is too long." });
-    // Validate before persisting, including keys/configuration inherited from global settings.
+    const rateLimit = validateSessionRateLimit({
+      requestsPerMinute: body.requestsPerMinute === undefined ? Number(current.requestsPerMinute ?? 0) : Number(body.requestsPerMinute),
+      minIntervalSeconds: body.minIntervalSeconds === undefined ? Number(current.minIntervalSeconds ?? 0) : Number(body.minIntervalSeconds),
+    });
     const effective = resolveSessionProvider(providerRuntime.get(), { providerOverride, modelOverride });
-    const session = store.updateSessionModel(sessionModelMatch[1], { providerOverride, modelOverride });
-    if (!session) return json(response, 404, { error: "Session not found." });
-    return json(response, 200, { providerOverride: session.providerOverride, modelOverride: session.modelOverride, effective: providerStatus(effective) });
+    store.updateSessionModel(sessionModelMatch[1], { providerOverride, modelOverride });
+    const session = store.updateSessionRateLimit(sessionModelMatch[1], rateLimit);
+    return json(response, 200, { providerOverride: session.providerOverride, modelOverride: session.modelOverride, rateLimit: sessionRateLimit(session), effective: providerStatus(effective) });
   }
   if (url.pathname === "/api/sessions/search" && request.method === "GET") {
     const query = url.searchParams.get("q")?.trim() || "";
@@ -1145,6 +1270,7 @@ async function handle(request, response) {
     if (activeChatControllers.has(sessionMatch[1])) return json(response, 409, { error: "Stop the active response before deleting this conversation." });
     const deleted = store.deleteSession(sessionMatch[1]);
     if (!deleted) return json(response, 404, { error: "Session not found." });
+    sessionRequestTimes.delete(sessionMatch[1]);
     await Promise.all(deleted.attachments.map((attachment) => fs.unlink(attachmentPath(attachment)).catch(() => {})));
     return json(response, 200, { deleted: true });
   }
@@ -1175,6 +1301,21 @@ async function handle(request, response) {
     controller.abort();
     return json(response, 202, { cancelled: true });
   }
+  const immediateChatMatch = url.pathname.match(/^\/api\/chat\/([^/]+)\/immediate$/);
+  if (immediateChatMatch && request.method === "POST") {
+    const session = store.getSession(immediateChatMatch[1]);
+    if (!session) return json(response, 404, { error: "Session not found." });
+    const active = activeChatRequests.get(session.id);
+    if (!active) return json(response, 409, { error: "No active request in this conversation. Send a normal message instead." });
+    const body = await readJson(request);
+    const content = String(body.content ?? "").trim();
+    if (!content || content.length > 16_000) return json(response, 400, { error: "Immediate instruction must be 1 to 16,000 characters." });
+    const instruction = store.addMessage({ sessionId: session.id, role: "immediate_instruction", content });
+    const expiredApprovals = expirePendingApprovalsForSession(session.id, "A newer immediate instruction superseded this unfinished request.");
+    active.immediateInstruction = { ...instruction, expiredApprovals };
+    active.controller.abort();
+    return json(response, 202, { accepted: true, instruction, expiredApprovals });
+  }
   if (url.pathname === "/api/chat" && request.method === "POST") {
     const body = await readJson(request);
     const session = store.getSession(body.sessionId);
@@ -1182,10 +1323,28 @@ async function handle(request, response) {
     if (attachmentIds.length > MAX_ATTACHMENTS_PER_MESSAGE) return json(response, 400, { error: `Up to ${MAX_ATTACHMENTS_PER_MESSAGE} attachments can be sent at once.` });
     if (!session || (!body.content?.trim() && !attachmentIds.length)) return json(response, 400, { error: "A valid sessionId and message or attachment are required." });
     if (attachmentIds.some((attachmentId) => { const attachment = store.getAttachment(attachmentId); return !attachment || attachment.sessionId !== session.id || attachment.messageId; })) return json(response, 400, { error: "One or more attachments are unavailable for this message." });
+    consumeSessionRequestAllowance(session);
     response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", connection: "keep-alive" });
     try {
-      const result = await generateAssistantReply(session, String(body.content ?? ""), { attachmentIds, collaborate: body.collaborate === true, onDelta: (delta) => sse(response, "delta", { text: delta }), onCollaboration: (event) => sse(response, "collaboration", event) });
-      sse(response, "done", result);
+      const originalContent = String(body.content ?? "");
+      let requestContent = originalContent;
+      let appendUser = true;
+      let restartCount = 0;
+      while (true) {
+        const result = await generateAssistantReply(session, requestContent, { appendUser, attachmentIds: appendUser ? attachmentIds : [], collaborate: body.collaborate === true, onDelta: (delta) => sse(response, "delta", { text: delta }), onCollaboration: (event) => sse(response, "collaboration", event) });
+        const update = result.immediateInstruction;
+        if (!update) {
+          sse(response, "done", result);
+          break;
+        }
+        restartCount += 1;
+        if (restartCount > 8) throw requestError("Too many immediate instruction restarts for one request.", 409);
+        sse(response, "immediate", { status: "restarting", instruction: update, expiredApprovals: update.expiredApprovals ?? 0 });
+        const currentSession = store.getSession(session.id);
+        consumeSessionRequestAllowance(currentSession);
+        requestContent = `[Original user request]\n${originalContent}\n\n[Latest immediate instruction]\n${update.content}`;
+        appendUser = false;
+      }
     } catch (error) {
       sse(response, "error", { error: redactSecret(error.message) });
     }
@@ -1198,6 +1357,7 @@ async function handle(request, response) {
     const messages = store.listMessages(session.id);
     const previousAssistant = messages.at(-1);
     if (!previousAssistant || previousAssistant.role !== "assistant") return json(response, 409, { error: "Only a session ending with an assistant answer can be regenerated." });
+    consumeSessionRequestAllowance(session);
     response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", connection: "keep-alive" });
     try {
       const result = await generateAssistantReply(session, "", { appendUser: false, excludeMessageId: previousAssistant.id, onDelta: (delta) => sse(response, "delta", { text: delta }) });
@@ -1242,7 +1402,10 @@ async function handle(request, response) {
 }
 
 if (cliMode) {
-  runCli({ config, store, providerRuntime }).catch((error) => {
+  // A direct packaged CLI invocation is also a first launch. Wait for the
+  // one-time registration attempt so `Flux.exe --help` and `flux install`
+  // cannot race each other or exit before the command shim is written.
+  void cliRegistrationReady.then(() => runCli({ config, store, providerRuntime })).catch((error) => {
     console.error(`FLUX CLI 오류: ${redactSecret(error.message ?? "Unexpected error.")}`);
     process.exitCode = 1;
   });

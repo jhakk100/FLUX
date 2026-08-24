@@ -50,6 +50,8 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
       created_at TEXT NOT NULL,
       project_lead INTEGER NOT NULL DEFAULT 0,
       role TEXT NOT NULL DEFAULT '',
+      requests_per_minute INTEGER NOT NULL DEFAULT 0,
+      min_interval_seconds INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS messages (
@@ -152,6 +154,22 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
       elapsed_ms INTEGER
     );
     CREATE INDEX IF NOT EXISTS collaboration_tasks_run_idx ON collaboration_tasks (run_id, child_session_id);
+    CREATE TABLE IF NOT EXISTS file_change_provenance (
+      id TEXT PRIMARY KEY,
+      approval_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      relative_path TEXT NOT NULL,
+      action TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'user',
+      session_id TEXT,
+      collaboration_run_id TEXT,
+      provider TEXT,
+      model TEXT,
+      debug_marker INTEGER NOT NULL DEFAULT 0,
+      resulting_hash TEXT,
+      applied_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS file_change_provenance_project_idx ON file_change_provenance (project_id, applied_at DESC);
   `);
   const sessionColumns = database.prepare("PRAGMA table_info(sessions)").all();
   if (!sessionColumns.some((column) => column.name === "archived_at")) {
@@ -168,6 +186,12 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
   }
   if (!sessionColumns.some((column) => column.name === "role")) {
     database.exec("ALTER TABLE sessions ADD COLUMN role TEXT NOT NULL DEFAULT ''");
+  }
+  if (!sessionColumns.some((column) => column.name === "requests_per_minute")) {
+    database.exec("ALTER TABLE sessions ADD COLUMN requests_per_minute INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!sessionColumns.some((column) => column.name === "min_interval_seconds")) {
+    database.exec("ALTER TABLE sessions ADD COLUMN min_interval_seconds INTEGER NOT NULL DEFAULT 0");
   }
   database.exec("CREATE UNIQUE INDEX IF NOT EXISTS project_lead_session_idx ON sessions (project_id) WHERE project_lead = 1");
   const projectColumns = database.prepare("PRAGMA table_info(projects)").all();
@@ -268,7 +292,7 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
     return project;
   }
   function createSession({ projectId = null, projectLead = false, role = "", title = "새 대화", source = "web", providerOverride = null, modelOverride = null }) {
-    const session = { id: id(), projectId, projectLead: Boolean(projectLead), role, title, source, providerOverride, modelOverride, createdAt: now(), updatedAt: now() };
+    const session = { id: id(), projectId, projectLead: Boolean(projectLead), role, requestsPerMinute: 0, minIntervalSeconds: 0, title, source, providerOverride, modelOverride, createdAt: now(), updatedAt: now() };
     database.prepare("INSERT INTO sessions (id, project_id, project_lead, role, title, source, provider_override, model_override, created_at, updated_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
       .run(session.id, session.projectId, session.projectLead ? 1 : 0, session.role, session.title, session.source, session.providerOverride, session.modelOverride, session.createdAt, session.updatedAt, null);
     audit("session.created", "session", session.id, { projectId, projectLead: session.projectLead, role: Boolean(session.role), source });
@@ -276,7 +300,7 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
   }
 
   function listSessions({ archived = false } = {}) {
-    return database.prepare("SELECT id, project_id AS projectId, project_lead AS projectLead, role, title, source, provider_override AS providerOverride, model_override AS modelOverride, created_at AS createdAt, updated_at AS updatedAt, archived_at AS archivedAt FROM sessions WHERE (archived_at IS NOT NULL) = ? ORDER BY updated_at DESC")
+    return database.prepare("SELECT id, project_id AS projectId, project_lead AS projectLead, role, requests_per_minute AS requestsPerMinute, min_interval_seconds AS minIntervalSeconds, title, source, provider_override AS providerOverride, model_override AS modelOverride, created_at AS createdAt, updated_at AS updatedAt, archived_at AS archivedAt FROM sessions WHERE (archived_at IS NOT NULL) = ? ORDER BY updated_at DESC")
       .all(archived ? 1 : 0);
   }
 
@@ -286,7 +310,7 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
   }
 
   function getProjectLeadSession(projectId) {
-    return database.prepare("SELECT id, project_id AS projectId, project_lead AS projectLead, role, title, source, provider_override AS providerOverride, model_override AS modelOverride, created_at AS createdAt, updated_at AS updatedAt, archived_at AS archivedAt FROM sessions WHERE project_id = ? AND project_lead = 1").get(projectId) ?? null;
+    return database.prepare("SELECT id, project_id AS projectId, project_lead AS projectLead, role, requests_per_minute AS requestsPerMinute, min_interval_seconds AS minIntervalSeconds, title, source, provider_override AS providerOverride, model_override AS modelOverride, created_at AS createdAt, updated_at AS updatedAt, archived_at AS archivedAt FROM sessions WHERE project_id = ? AND project_lead = 1").get(projectId) ?? null;
   }
 
   function ensureProjectLeadSession(project) {
@@ -296,7 +320,7 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
   }
 
   function getSession(sessionId) {
-    return database.prepare("SELECT id, project_id AS projectId, project_lead AS projectLead, role, title, source, provider_override AS providerOverride, model_override AS modelOverride, created_at AS createdAt, updated_at AS updatedAt, archived_at AS archivedAt FROM sessions WHERE id = ?").get(sessionId);
+    return database.prepare("SELECT id, project_id AS projectId, project_lead AS projectLead, role, requests_per_minute AS requestsPerMinute, min_interval_seconds AS minIntervalSeconds, title, source, provider_override AS providerOverride, model_override AS modelOverride, created_at AS createdAt, updated_at AS updatedAt, archived_at AS archivedAt FROM sessions WHERE id = ?").get(sessionId);
   }
 
   function renameSession(sessionId, title) {
@@ -337,10 +361,19 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
     return getSession(sessionId);
   }
 
+  function updateSessionRateLimit(sessionId, { requestsPerMinute, minIntervalSeconds }) {
+    const session = getSession(sessionId);
+    if (!session) return null;
+    const updatedAt = now();
+    database.prepare("UPDATE sessions SET requests_per_minute = ?, min_interval_seconds = ?, updated_at = ? WHERE id = ?")
+      .run(requestsPerMinute, minIntervalSeconds, updatedAt, sessionId);
+    audit("session.rate_limit_updated", "session", sessionId, { requestsPerMinute, minIntervalSeconds });
+    return getSession(sessionId);
+  }
   function searchSessions(query, { archived = false } = {}) {
     const like = `%${query.replaceAll("%", "\\%").replaceAll("_", "\\_")}%`;
     return database.prepare(`
-      SELECT sessions.id, sessions.project_id AS projectId, sessions.project_lead AS projectLead, sessions.role, sessions.title, sessions.source, sessions.provider_override AS providerOverride, sessions.model_override AS modelOverride,
+      SELECT sessions.id, sessions.project_id AS projectId, sessions.project_lead AS projectLead, sessions.role, sessions.requests_per_minute AS requestsPerMinute, sessions.min_interval_seconds AS minIntervalSeconds, sessions.title, sessions.source, sessions.provider_override AS providerOverride, sessions.model_override AS modelOverride,
              sessions.created_at AS createdAt, sessions.updated_at AS updatedAt, sessions.archived_at AS archivedAt,
              substr(messages.content, 1, 180) AS matchedContent
       FROM sessions LEFT JOIN messages ON messages.session_id = sessions.id
@@ -580,6 +613,18 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
     return database.prepare("SELECT id FROM collaboration_runs WHERE lead_session_id = ? ORDER BY started_at DESC LIMIT ?").all(leadSessionId, limit)
       .map((row) => getCollaborationRun(row.id));
   }
+  function recordFileProvenance({ approvalId, projectId, relativePath, action, source = "user", sessionId = null, collaborationRunId = null, provider = null, model = null, debugMarker = false, resultingHash = null }) {
+    const record = { id: id(), approvalId, projectId, relativePath, action, source, sessionId, collaborationRunId, provider, model, debugMarker: Boolean(debugMarker), resultingHash, appliedAt: now() };
+    database.prepare("INSERT INTO file_change_provenance (id, approval_id, project_id, relative_path, action, source, session_id, collaboration_run_id, provider, model, debug_marker, resulting_hash, applied_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(record.id, record.approvalId, record.projectId, record.relativePath, record.action, record.source, record.sessionId, record.collaborationRunId, record.provider, record.model, record.debugMarker ? 1 : 0, record.resultingHash, record.appliedAt);
+    audit("file.provenance_recorded", "file_change_provenance", record.id, { projectId, relativePath, action, source, sessionId, collaborationRunId, debugMarker: record.debugMarker });
+    return record;
+  }
+
+  function listFileProvenance(projectId, limit = 100) {
+    return database.prepare("SELECT id, approval_id AS approvalId, project_id AS projectId, relative_path AS relativePath, action, source, session_id AS sessionId, collaboration_run_id AS collaborationRunId, provider, model, debug_marker AS debugMarker, resulting_hash AS resultingHash, applied_at AS appliedAt FROM file_change_provenance WHERE project_id = ? ORDER BY applied_at DESC LIMIT ?").all(projectId, limit)
+      .map((record) => ({ ...record, debugMarker: Boolean(record.debugMarker) }));
+  }
   function createApproval({ action, risk, target, preview, payload }) {
     const approval = { id: id(), action, risk, target, preview, payload, status: "pending", createdAt: now() };
     database.prepare("INSERT INTO approvals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
@@ -633,5 +678,5 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
     audit("setting.updated", "setting", key, { key });
   }
 
-  return { close: () => database.close(), createProject, listProjects, getProject, updateProjectInstructions, listProjectAgents, getProjectAgent, createProjectAgent, updateProjectAgent, deleteProjectAgent, deleteProject, createSession, listSessions, countProjectChildSessions, getProjectLeadSession, ensureProjectLeadSession, getSession, renameSession, archiveSession, updateSessionModel, updateSessionRole, searchSessions, addMessage, listMessages, createPendingAttachment, getAttachment, attachPendingAttachments, deletePendingAttachment, deleteMessage, deleteSession, getOrCreateDiscordSession, getSessionContext, saveSessionContext, listMemories, createMemory, updateMemory, deleteMemory, listGoals, createGoal, updateGoal, deleteGoal, createCollaborationRun, createCollaborationTask, updateCollaborationTask, completeCollaborationRun, getCollaborationRun, listCollaborationRuns, createApproval, listApprovals, getApproval, decideApproval, expireApproval, listAuditEvents, getSetting, setSetting };
+  return { close: () => database.close(), createProject, listProjects, getProject, updateProjectInstructions, listProjectAgents, getProjectAgent, createProjectAgent, updateProjectAgent, deleteProjectAgent, deleteProject, createSession, listSessions, countProjectChildSessions, getProjectLeadSession, ensureProjectLeadSession, getSession, renameSession, archiveSession, updateSessionModel, updateSessionRole, updateSessionRateLimit, searchSessions, addMessage, listMessages, createPendingAttachment, getAttachment, attachPendingAttachments, deletePendingAttachment, deleteMessage, deleteSession, getOrCreateDiscordSession, getSessionContext, saveSessionContext, listMemories, createMemory, updateMemory, deleteMemory, listGoals, createGoal, updateGoal, deleteGoal, createCollaborationRun, createCollaborationTask, updateCollaborationTask, completeCollaborationRun, getCollaborationRun, listCollaborationRuns, recordFileProvenance, listFileProvenance, createApproval, listApprovals, getApproval, decideApproval, expireApproval, listAuditEvents, getSetting, setSetting };
 }
