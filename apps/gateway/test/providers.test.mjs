@@ -132,3 +132,20 @@ test("FactChat stream accepts optional absent messages and emits its response", 
     globalThis.fetch = originalFetch;
   }
 });
+test("Ollama empty responses include safe stream diagnostics", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    message: { thinking: "internal reasoning" },
+    done: true,
+    done_reason: "length",
+  }) + "\n");
+  try {
+    const runtime = createProviderRuntime(baseConfig);
+    runtime.configure({ provider: "ollama", ollamaModel: "diagnostic-model" });
+    await assert.rejects(async () => {
+      for await (const delta of streamCompletion(runtime.get(), [{ role: "user", content: "test" }])) void delta;
+    }, /Ollama returned an empty response \(model=diagnostic-model, streamed_events=1, visible_chars=0, thinking_chars=18, done_reason=length\)/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

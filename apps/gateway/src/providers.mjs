@@ -182,11 +182,25 @@ async function* ollamaStream(config, messages, signal) {
   const decoder = new TextDecoder();
   let buffer = "";
   let yieldedContent = false;
+  let visibleCharacterCount = 0;
+  let streamedEventCount = 0;
+  let thinkingCharacterCount = 0;
+  let doneReason = null;
   const consumeLine = function* (line) {
     if (!line.trim()) return;
-    const event = JSON.parse(line);
+    let event;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      throw new Error("Ollama returned an invalid JSONL stream after " + streamedEventCount + " event(s).");
+    }
+    streamedEventCount += 1;
+    const thinking = event.message?.thinking ?? event.message?.reasoning;
+    if (typeof thinking === "string") thinkingCharacterCount += thinking.length;
+    if (event.done) doneReason = typeof event.done_reason === "string" ? event.done_reason : "unspecified";
     if (event.message?.content) {
       yieldedContent = true;
+      visibleCharacterCount += event.message.content.length;
       yield event.message.content;
     }
     if (event.error) throw new Error(event.error);
@@ -208,7 +222,14 @@ async function* ollamaStream(config, messages, signal) {
     const imageHint = hasImageAttachments(messages)
       ? " The selected model reported vision support but returned no image analysis; try another local vision model or update Ollama."
       : "";
-    throw new Error(`Ollama returned an empty response.${imageHint}`);
+    const diagnostics = [
+      "model=" + config.ollama.model,
+      "streamed_events=" + streamedEventCount,
+      "visible_chars=" + visibleCharacterCount,
+      "thinking_chars=" + thinkingCharacterCount,
+      "done_reason=" + (doneReason ?? "missing"),
+    ].join(", ");
+    throw new Error("Ollama returned an empty response (" + diagnostics + ")." + imageHint);
   }
 }
 

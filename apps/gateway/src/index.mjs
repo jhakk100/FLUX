@@ -124,6 +124,7 @@ const MAX_ATTACHMENTS_PER_MESSAGE = 4;
 const MAX_ATTACHMENT_TEXT_CHARS = 40_000;
 const ATTACHMENT_DIRECTORY = path.join(config.dataDirectory, "attachments");
 const MAX_COLLABORATION_AGENTS = 4;
+const MAX_COLLABORATION_ROUNDS = 50;
 const TEXT_ATTACHMENT_TYPES = new Set(["text/plain", "text/markdown", "text/csv", "application/json", "application/xml", "text/xml", "text/html", "text/css", "application/javascript"]);
 const HIDDEN_WORKSPACE_ENTRIES = new Set([".git", ".flux-trash", "node_modules"]);
 const WORKSPACE_OVERVIEW_FILES = new Set(["readme.md", "package.json", "pyproject.toml", "cargo.toml", "go.mod", "requirements.txt", "compose.yaml", "docker-compose.yml"]);
@@ -609,10 +610,20 @@ async function streamProjectRoomText(provider, messages, signal) {
   return text.trim();
 }
 
+function collaborationRoundDisplay(roundLimit) {
+  return roundLimit === 0 ? "∞ (비상 정지 50회)" : String(roundLimit);
+}
+
+function isSuperiorRoomComplete(plan) {
+  return /^\s*\[FLUX_ROOM_COMPLETE\](?:\s|$)/.test(String(plan ?? ""));
+}
+
 async function collectProjectRoomReports({ project, leadSession, content, modelContext, controller, onStatus = () => {} }) {
   const selected = store.listProjectAgents(project.id).filter((agent) => agent.enabled).slice(0, MAX_COLLABORATION_AGENTS);
   if (!selected.length) return { selected: [], reports: [], run: null };
-  const roundLimit = Math.max(1, Math.min(3, Number(project.collaborationRoundLimit ?? 2)));
+  const roundLimit = Math.max(0, Math.min(MAX_COLLABORATION_ROUNDS, Number(project.collaborationRoundLimit ?? 2)));
+  const executionRoundLimit = roundLimit === 0 ? MAX_COLLABORATION_ROUNDS : roundLimit;
+  const roundDisplay = collaborationRoundDisplay(roundLimit);
   const retryLimit = Math.max(0, Math.min(2, Number(project.emptyResponseRetryCount ?? 1)));
   const run = store.createCollaborationRun({ projectId: project.id, leadSessionId: leadSession.id, requestContent: content, roundLimit, emptyResponseRetryCount: retryLimit });
   const recordRoomMessage = (message) => {
@@ -629,7 +640,8 @@ async function collectProjectRoomReports({ project, leadSession, content, modelC
     const signal = AbortSignal.any([controller.signal, deadline]);
     const messages = [
       { role: "system", content: "You are the FLUX superior coordinator in a sequential project room. Produce a compact plan for this collaboration round: at most four bullets covering what the members should verify, disagreements to resolve, and the expected handoff. Do not write a final answer, do not claim file changes, and do not emit FLUX tool blocks." },
-      { role: "system", content: `Project: ${project.name}\nRound: ${roundIndex}/${roundLimit}` },
+      { role: "system", content: roundLimit === 0 ? "This room repeats until you decide the requested work is complete. Only when the work is genuinely complete, begin your response with the exact line [FLUX_ROOM_COMPLETE]. Otherwise provide the next compact plan. FLUX will force an emergency stop after 50 rounds." : "This room has a fixed round limit. Always provide the next compact plan." },
+      { role: "system", content: `Project: ${project.name}\nRound: ${roundIndex}/${roundDisplay}` },
       projectInstructionMessage({ source: "FLUX project settings", content: project.instructions }),
       modelContext.summaryMessage,
       ...modelContext.activeMessages,
@@ -663,17 +675,32 @@ async function collectProjectRoomReports({ project, leadSession, content, modelC
     return "Use your assigned role and report concise evidence.";
   }
 
-  for (let roundIndex = 1; roundIndex <= roundLimit && !controller.signal.aborted; roundIndex += 1) {
+  let endedBySuperior = false;
+  let emergencyStopped = false;
+
+  for (let roundIndex = 1; roundIndex <= executionRoundLimit && !controller.signal.aborted; roundIndex += 1) {
     recordRoomMessage({
       sessionId: leadSession.id,
       role: "system",
-      content: `[FLUX] 협업 라운드 ${roundIndex}/${roundLimit} 시작 · ${selected.map((agent, index) => `${index + 1}. ${agent.name}`).join(" → ")}`,
+      content: `[FLUX] 협업 라운드 ${roundIndex}/${roundDisplay} 시작 · ${selected.map((agent, index) => `${index + 1}. ${agent.name}`).join(" → ")}`,
       senderKind: "system",
       senderName: "FLUX",
       collaborationRunId: run.id,
     });
     const superiorPlan = await prepareSuperiorRound(roundIndex);
     if (controller.signal.aborted) break;
+    if (roundLimit === 0 && isSuperiorRoomComplete(superiorPlan)) {
+      endedBySuperior = true;
+      recordRoomMessage({
+        sessionId: leadSession.id,
+        role: "system",
+        content: "[FLUX] superior가 라운드 " + roundIndex + "에서 작업 완료를 판단해 무제한 협업을 종료했습니다.",
+        senderKind: "system",
+        senderName: "FLUX",
+        collaborationRunId: run.id,
+      });
+      break;
+    }
 
     for (const agent of selected) {
       const providerInfo = collaborationProviderInfo(agent);
@@ -703,7 +730,7 @@ async function collectProjectRoomReports({ project, leadSession, content, modelC
       try {
         const workerMessages = [
           { role: "system", content: "You are one member of a sequential FLUX project room. Give a concise analysis-only report: at most five short bullets covering conclusion, evidence, and a handoff. Do not claim file changes, do not emit FLUX tool blocks, and do not make approval decisions." },
-          { role: "system", content: `Project: ${project.name}\nRound: ${roundIndex}/${roundLimit}\nYour assigned role: ${agent.role || "Independent reviewer"}\nSuperior plan:\n${superiorPlan.slice(0, 2_000)}` },
+          { role: "system", content: `Project: ${project.name}\nRound: ${roundIndex}/${roundDisplay}\nYour assigned role: ${agent.role || "Independent reviewer"}\nSuperior plan:\n${superiorPlan.slice(0, 2_000)}` },
           projectInstructionMessage({ source: "FLUX project settings", content: project.instructions }),
           modelContext.summaryMessage,
           ...modelContext.activeMessages,
@@ -776,9 +803,21 @@ async function collectProjectRoomReports({ project, leadSession, content, modelC
     }
   }
 
-  const expectedReports = selected.length * roundLimit;
+  if (roundLimit === 0 && !controller.signal.aborted && !endedBySuperior) {
+    emergencyStopped = true;
+    recordRoomMessage({
+      sessionId: leadSession.id,
+      role: "system",
+      content: "[FLUX 비상 정지] 무제한 협업이 50라운드에 도달했지만 superior 종료 표식이 없어 자동 중지했습니다. 기록을 검토한 뒤 새 요청으로 이어가세요.",
+      senderKind: "system",
+      senderName: "FLUX",
+      collaborationRunId: run.id,
+    });
+  }
+
+  const expectedReports = results.length;
   const successful = results.filter((item) => item.ok).length;
-  const status = controller.signal.aborted ? "cancelled" : successful === expectedReports ? "completed" : successful ? "partial" : "failed";
+  const status = controller.signal.aborted ? "cancelled" : emergencyStopped ? "emergency_stopped" : successful === expectedReports ? "completed" : successful ? "partial" : "failed";
   const latestRun = store.getCollaborationRun(run.id);
   const finished = store.completeCollaborationRun(run.id, { status, summary: collaborationSummary({ ...latestRun, status, elapsedMs: Math.max(0, Date.now() - Date.parse(run.startedAt)), tasks: latestRun.tasks }) });
   recordRoomMessage({ sessionId: leadSession.id, role: "system", content: finished.summary, senderKind: "system", senderName: "FLUX", collaborationRunId: run.id });
@@ -1276,7 +1315,7 @@ async function handle(request, response) {
     const body = await readJson(request);
     const collaborationRoundLimit = body.collaborationRoundLimit === undefined ? Number(project.collaborationRoundLimit ?? 2) : Number(body.collaborationRoundLimit);
     const emptyResponseRetryCount = body.emptyResponseRetryCount === undefined ? Number(project.emptyResponseRetryCount ?? 1) : Number(body.emptyResponseRetryCount);
-    if (!Number.isInteger(collaborationRoundLimit) || collaborationRoundLimit < 1 || collaborationRoundLimit > 3) return json(response, 400, { error: "collaborationRoundLimit must be an integer between 1 and 3." });
+    if (!Number.isInteger(collaborationRoundLimit) || collaborationRoundLimit < 0 || collaborationRoundLimit > MAX_COLLABORATION_ROUNDS) return json(response, 400, { error: "collaborationRoundLimit must be an integer between 0 and 50." });
     if (!Number.isInteger(emptyResponseRetryCount) || emptyResponseRetryCount < 0 || emptyResponseRetryCount > 2) return json(response, 400, { error: "emptyResponseRetryCount must be an integer between 0 and 2." });
     return json(response, 200, store.updateProjectCollaborationSettings(project.id, { collaborationRoundLimit, emptyResponseRetryCount }));
   }

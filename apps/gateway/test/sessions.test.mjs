@@ -202,8 +202,8 @@ test("project collaboration settings and retry diagnostics persist per project",
   });
   assert.equal(store.getProject(project.id).collaborationRoundLimit, 3);
   assert.equal(store.getProject(project.id).emptyResponseRetryCount, 2);
-  const updatedProject = store.updateProjectCollaborationSettings(project.id, { collaborationRoundLimit: 2, emptyResponseRetryCount: 1 });
-  assert.equal(updatedProject.collaborationRoundLimit, 2);
+  const updatedProject = store.updateProjectCollaborationSettings(project.id, { collaborationRoundLimit: 0, emptyResponseRetryCount: 1 });
+  assert.equal(updatedProject.collaborationRoundLimit, 0);
   assert.equal(updatedProject.emptyResponseRetryCount, 1);
 
   const lead = store.ensureProjectLeadSession(updatedProject);
@@ -211,7 +211,7 @@ test("project collaboration settings and retry diagnostics persist per project",
     projectId: project.id,
     leadSessionId: lead.id,
     requestContent: "진단",
-    roundLimit: 2,
+    roundLimit: 0,
     emptyResponseRetryCount: 1,
   });
   const task = store.createCollaborationTask({
@@ -227,7 +227,7 @@ test("project collaboration settings and retry diagnostics persist per project",
   const completed = store.updateCollaborationTask(task.id, { status: "completed", attemptCount: 2, retryLog });
   const stored = store.getCollaborationRun(run.id);
 
-  assert.equal(stored.roundLimit, 2);
+  assert.equal(stored.roundLimit, 0);
   assert.equal(stored.emptyResponseRetryCount, 1);
   assert.equal(completed.roundIndex, 2);
   assert.equal(completed.attemptCount, 2);
