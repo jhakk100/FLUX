@@ -60,6 +60,28 @@ test("project teams are isolated and removed with their FLUX project only", asyn
   store.close();
 });
 
+test("project room members retain order, timing, and timeline sender metadata", async (context) => {
+  const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "flux-project-room-"));
+  context.after(() => fs.rm(dataDirectory, { recursive: true, force: true }));
+  const store = openStore(dataDirectory);
+  const project = store.createProject({ name: "room", workspacePath: "C:/work/room" });
+  const superior = store.ensureProjectLeadSession(project);
+  const later = store.createProjectAgent({ projectId: project.id, name: "later", providerOverride: "ollama", turnOrder: 2, timeoutSeconds: 120, waitSeconds: 4 });
+  const first = store.createProjectAgent({ projectId: project.id, name: "first", providerOverride: "google-ai", turnOrder: 0, timeoutSeconds: 300, waitSeconds: 0 });
+  assert.deepEqual(store.listProjectAgents(project.id).map((agent) => agent.name), ["first", "later"]);
+  const updated = store.updateProjectAgent(project.id, later.id, { turnOrder: 1, timeoutSeconds: 90, waitSeconds: 2 });
+  assert.equal(updated.turnOrder, 1);
+  assert.equal(updated.timeoutSeconds, 90);
+  assert.equal(updated.waitSeconds, 2);
+  store.addMessage({ sessionId: superior.id, role: "user", content: "시작", senderKind: "user", senderName: "user" });
+  store.addMessage({ sessionId: superior.id, role: "assistant", content: "검토 결과", senderKind: "member", senderName: first.name, projectMemberId: first.id, collaborationRunId: "run-1" });
+  const timeline = store.listMessages(superior.id);
+  assert.deepEqual(timeline.map((message) => message.senderKind), ["user", "member"]);
+  assert.equal(timeline[1].senderName, "first");
+  assert.equal(timeline[1].projectMemberId, first.id);
+  assert.equal(timeline[1].collaborationRunId, "run-1");
+  store.close();
+});
 test("legacy executable data migrates into the persistent data directory once", async (context) => {
   const legacyDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "flux-legacy-data-"));
   const persistentDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "flux-persistent-data-"));

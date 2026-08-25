@@ -38,10 +38,13 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
       provider_override TEXT NOT NULL,
       model_override TEXT,
       enabled INTEGER NOT NULL DEFAULT 1,
+      turn_order INTEGER NOT NULL DEFAULT 0,
+      timeout_seconds INTEGER NOT NULL DEFAULT 300,
+      wait_seconds INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS project_agents_project_idx ON project_agents (project_id, created_at);
+    CREATE INDEX IF NOT EXISTS project_agents_project_idx ON project_agents (project_id, turn_order, created_at);
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
       project_id TEXT REFERENCES projects(id),
@@ -59,7 +62,11 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
       session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
       role TEXT NOT NULL,
       content TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      sender_kind TEXT,
+      sender_name TEXT,
+      project_member_id TEXT,
+      collaboration_run_id TEXT
     );
     CREATE TABLE IF NOT EXISTS attachments (
       id TEXT PRIMARY KEY,
@@ -194,6 +201,15 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
     database.exec("ALTER TABLE sessions ADD COLUMN min_interval_seconds INTEGER NOT NULL DEFAULT 0");
   }
   database.exec("CREATE UNIQUE INDEX IF NOT EXISTS project_lead_session_idx ON sessions (project_id) WHERE project_lead = 1");
+  const projectAgentColumns = database.prepare("PRAGMA table_info(project_agents)").all();
+  if (!projectAgentColumns.some((column) => column.name === "turn_order")) database.exec("ALTER TABLE project_agents ADD COLUMN turn_order INTEGER NOT NULL DEFAULT 0");
+  if (!projectAgentColumns.some((column) => column.name === "timeout_seconds")) database.exec("ALTER TABLE project_agents ADD COLUMN timeout_seconds INTEGER NOT NULL DEFAULT 300");
+  if (!projectAgentColumns.some((column) => column.name === "wait_seconds")) database.exec("ALTER TABLE project_agents ADD COLUMN wait_seconds INTEGER NOT NULL DEFAULT 0");
+  const messageColumns = database.prepare("PRAGMA table_info(messages)").all();
+  if (!messageColumns.some((column) => column.name === "sender_kind")) database.exec("ALTER TABLE messages ADD COLUMN sender_kind TEXT");
+  if (!messageColumns.some((column) => column.name === "sender_name")) database.exec("ALTER TABLE messages ADD COLUMN sender_name TEXT");
+  if (!messageColumns.some((column) => column.name === "project_member_id")) database.exec("ALTER TABLE messages ADD COLUMN project_member_id TEXT");
+  if (!messageColumns.some((column) => column.name === "collaboration_run_id")) database.exec("ALTER TABLE messages ADD COLUMN collaboration_run_id TEXT");
   const projectColumns = database.prepare("PRAGMA table_info(projects)").all();
   if (!projectColumns.some((column) => column.name === "instructions")) {
     database.exec("ALTER TABLE projects ADD COLUMN instructions TEXT NOT NULL DEFAULT ''");
@@ -231,24 +247,25 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
   }
 
   function listProjectAgents(projectId) {
-    return database.prepare("SELECT id, project_id AS projectId, name, role, provider_override AS providerOverride, model_override AS modelOverride, enabled, created_at AS createdAt, updated_at AS updatedAt FROM project_agents WHERE project_id = ? ORDER BY created_at ASC").all(projectId)
+    return database.prepare("SELECT id, project_id AS projectId, name, role, provider_override AS providerOverride, model_override AS modelOverride, enabled, turn_order AS turnOrder, timeout_seconds AS timeoutSeconds, wait_seconds AS waitSeconds, created_at AS createdAt, updated_at AS updatedAt FROM project_agents WHERE project_id = ? ORDER BY turn_order ASC, created_at ASC, rowid ASC").all(projectId)
       .map((agent) => ({ ...agent, enabled: Boolean(agent.enabled) }));
   }
 
   function getProjectAgent(projectId, agentId) {
-    const agent = database.prepare("SELECT id, project_id AS projectId, name, role, provider_override AS providerOverride, model_override AS modelOverride, enabled, created_at AS createdAt, updated_at AS updatedAt FROM project_agents WHERE project_id = ? AND id = ?").get(projectId, agentId);
+    const agent = database.prepare("SELECT id, project_id AS projectId, name, role, provider_override AS providerOverride, model_override AS modelOverride, enabled, turn_order AS turnOrder, timeout_seconds AS timeoutSeconds, wait_seconds AS waitSeconds, created_at AS createdAt, updated_at AS updatedAt FROM project_agents WHERE project_id = ? AND id = ?").get(projectId, agentId);
     return agent ? { ...agent, enabled: Boolean(agent.enabled) } : null;
   }
 
-  function createProjectAgent({ projectId, name, role = "", providerOverride, modelOverride = null, enabled = true }) {
-    const agent = { id: id(), projectId, name, role, providerOverride, modelOverride, enabled: Boolean(enabled), createdAt: now(), updatedAt: now() };
-    database.prepare("INSERT INTO project_agents (id, project_id, name, role, provider_override, model_override, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(agent.id, agent.projectId, agent.name, agent.role, agent.providerOverride, agent.modelOverride, agent.enabled ? 1 : 0, agent.createdAt, agent.updatedAt);
-    audit("project_agent.created", "project_agent", agent.id, { projectId, name, providerOverride, modelOverride, enabled: agent.enabled });
+  function createProjectAgent({ projectId, name, role = "", providerOverride, modelOverride = null, enabled = true, turnOrder = null, timeoutSeconds = 300, waitSeconds = 0 }) {
+    const nextOrder = Number.isInteger(turnOrder) ? turnOrder : database.prepare("SELECT COUNT(*) AS count FROM project_agents WHERE project_id = ?").get(projectId).count;
+    const agent = { id: id(), projectId, name, role, providerOverride, modelOverride, enabled: Boolean(enabled), turnOrder: nextOrder, timeoutSeconds, waitSeconds, createdAt: now(), updatedAt: now() };
+    database.prepare("INSERT INTO project_agents (id, project_id, name, role, provider_override, model_override, enabled, turn_order, timeout_seconds, wait_seconds, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(agent.id, agent.projectId, agent.name, agent.role, agent.providerOverride, agent.modelOverride, agent.enabled ? 1 : 0, agent.turnOrder, agent.timeoutSeconds, agent.waitSeconds, agent.createdAt, agent.updatedAt);
+    audit("project_agent.created", "project_agent", agent.id, { projectId, name, providerOverride, modelOverride, enabled: agent.enabled, turnOrder: agent.turnOrder });
     return agent;
   }
 
-  function updateProjectAgent(projectId, agentId, { name, role, providerOverride, modelOverride, enabled }) {
+  function updateProjectAgent(projectId, agentId, { name, role, providerOverride, modelOverride, enabled, turnOrder, timeoutSeconds, waitSeconds }) {
     const agent = getProjectAgent(projectId, agentId);
     if (!agent) return null;
     const next = {
@@ -257,11 +274,14 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
       providerOverride: providerOverride ?? agent.providerOverride,
       modelOverride: modelOverride === undefined ? agent.modelOverride : modelOverride,
       enabled: enabled ?? agent.enabled,
+      turnOrder: turnOrder ?? agent.turnOrder,
+      timeoutSeconds: timeoutSeconds ?? agent.timeoutSeconds,
+      waitSeconds: waitSeconds ?? agent.waitSeconds,
       updatedAt: now(),
     };
-    database.prepare("UPDATE project_agents SET name = ?, role = ?, provider_override = ?, model_override = ?, enabled = ?, updated_at = ? WHERE id = ?")
-      .run(next.name, next.role, next.providerOverride, next.modelOverride, next.enabled ? 1 : 0, next.updatedAt, agentId);
-    audit("project_agent.updated", "project_agent", agentId, { projectId, name: next.name, providerOverride: next.providerOverride, modelOverride: next.modelOverride, enabled: Boolean(next.enabled) });
+    database.prepare("UPDATE project_agents SET name = ?, role = ?, provider_override = ?, model_override = ?, enabled = ?, turn_order = ?, timeout_seconds = ?, wait_seconds = ?, updated_at = ? WHERE id = ?")
+      .run(next.name, next.role, next.providerOverride, next.modelOverride, next.enabled ? 1 : 0, next.turnOrder, next.timeoutSeconds, next.waitSeconds, next.updatedAt, agentId);
+    audit("project_agent.updated", "project_agent", agentId, { projectId, name: next.name, providerOverride: next.providerOverride, modelOverride: next.modelOverride, enabled: Boolean(next.enabled), turnOrder: next.turnOrder });
     return getProjectAgent(projectId, agentId);
   }
 
@@ -316,7 +336,7 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
   function ensureProjectLeadSession(project) {
     const existing = getProjectLeadSession(project.id);
     if (existing) return existing.archivedAt ? archiveSession(existing.id, false) : existing;
-    return createSession({ projectId: project.id, projectLead: true, title: `${project.name} · 프로젝트 대화` });
+    return createSession({ projectId: project.id, projectLead: true, title: `${project.name} · superior` });
   }
 
   function getSession(sessionId) {
@@ -384,17 +404,17 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
     `).all(archived ? 1 : 0, like, like);
   }
 
-  function addMessage({ sessionId, role, content }) {
-    const message = { id: id(), sessionId, role, content, createdAt: now() };
-    database.prepare("INSERT INTO messages VALUES (?, ?, ?, ?, ?)")
-      .run(message.id, message.sessionId, message.role, message.content, message.createdAt);
+  function addMessage({ sessionId, role, content, senderKind = null, senderName = null, projectMemberId = null, collaborationRunId = null }) {
+    const message = { id: id(), sessionId, role, content, senderKind, senderName, projectMemberId, collaborationRunId, createdAt: now() };
+    database.prepare("INSERT INTO messages (id, session_id, role, content, created_at, sender_kind, sender_name, project_member_id, collaboration_run_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(message.id, message.sessionId, message.role, message.content, message.createdAt, message.senderKind, message.senderName, message.projectMemberId, message.collaborationRunId);
     database.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(message.createdAt, sessionId);
-    audit("message.created", "message", message.id, { sessionId, role, length: content.length });
+    audit("message.created", "message", message.id, { sessionId, role, senderKind, projectMemberId, length: content.length });
     return message;
   }
 
   function listMessages(sessionId) {
-    const messages = database.prepare("SELECT id, session_id AS sessionId, role, content, created_at AS createdAt FROM messages WHERE session_id = ? ORDER BY created_at ASC").all(sessionId);
+    const messages = database.prepare("SELECT id, session_id AS sessionId, role, content, created_at AS createdAt, sender_kind AS senderKind, sender_name AS senderName, project_member_id AS projectMemberId, collaboration_run_id AS collaborationRunId FROM messages WHERE session_id = ? ORDER BY created_at ASC, rowid ASC").all(sessionId);
     const attachments = database.prepare("SELECT id, session_id AS sessionId, message_id AS messageId, file_name AS fileName, mime_type AS mimeType, byte_size AS byteSize, storage_path AS storagePath, created_at AS createdAt FROM attachments WHERE session_id = ? AND message_id IS NOT NULL ORDER BY created_at ASC").all(sessionId);
     const byMessage = new Map();
     for (const attachment of attachments) {
@@ -590,7 +610,7 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
     if (!existing) return null;
     const nextStatus = status ?? existing.status;
     const starts = nextStatus === "running" && !existing.startedAt ? now() : existing.startedAt;
-    const finishes = ["completed", "failed", "cancelled"].includes(nextStatus) ? now() : null;
+    const finishes = ["completed", "failed", "cancelled", "timed_out"].includes(nextStatus) ? now() : null;
     const elapsed = finishes && starts ? Math.max(0, Date.parse(finishes) - Date.parse(starts)) : null;
     database.prepare("UPDATE collaboration_tasks SET status = ?, error = ?, response_message_id = ?, started_at = ?, completed_at = ?, elapsed_ms = ? WHERE id = ?")
       .run(nextStatus, error ?? "", responseMessageId ?? null, starts, finishes, elapsed, taskId);
