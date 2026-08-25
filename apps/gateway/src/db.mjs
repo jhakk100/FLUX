@@ -28,6 +28,8 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
       name TEXT NOT NULL,
       workspace_path TEXT NOT NULL,
       instructions TEXT NOT NULL DEFAULT '',
+      collaboration_round_limit INTEGER NOT NULL DEFAULT 2,
+      empty_response_retry_count INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS project_agents (
@@ -141,7 +143,9 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
       started_at TEXT NOT NULL,
       completed_at TEXT,
       elapsed_ms INTEGER,
-      summary TEXT NOT NULL DEFAULT ''
+      summary TEXT NOT NULL DEFAULT '',
+      round_limit INTEGER NOT NULL DEFAULT 1,
+      empty_response_retry_count INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS collaboration_runs_lead_idx ON collaboration_runs (lead_session_id, started_at DESC);
     CREATE TABLE IF NOT EXISTS collaboration_tasks (
@@ -158,7 +162,10 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
       error TEXT NOT NULL DEFAULT '',
       started_at TEXT,
       completed_at TEXT,
-      elapsed_ms INTEGER
+      elapsed_ms INTEGER,
+      round_index INTEGER NOT NULL DEFAULT 1,
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      retry_log TEXT NOT NULL DEFAULT '[]'
     );
     CREATE INDEX IF NOT EXISTS collaboration_tasks_run_idx ON collaboration_tasks (run_id, child_session_id);
     CREATE TABLE IF NOT EXISTS file_change_provenance (
@@ -214,6 +221,15 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
   if (!projectColumns.some((column) => column.name === "instructions")) {
     database.exec("ALTER TABLE projects ADD COLUMN instructions TEXT NOT NULL DEFAULT ''");
   }
+  if (!projectColumns.some((column) => column.name === "collaboration_round_limit")) database.exec("ALTER TABLE projects ADD COLUMN collaboration_round_limit INTEGER NOT NULL DEFAULT 2");
+  if (!projectColumns.some((column) => column.name === "empty_response_retry_count")) database.exec("ALTER TABLE projects ADD COLUMN empty_response_retry_count INTEGER NOT NULL DEFAULT 1");
+  const collaborationRunColumns = database.prepare("PRAGMA table_info(collaboration_runs)").all();
+  if (!collaborationRunColumns.some((column) => column.name === "round_limit")) database.exec("ALTER TABLE collaboration_runs ADD COLUMN round_limit INTEGER NOT NULL DEFAULT 1");
+  if (!collaborationRunColumns.some((column) => column.name === "empty_response_retry_count")) database.exec("ALTER TABLE collaboration_runs ADD COLUMN empty_response_retry_count INTEGER NOT NULL DEFAULT 0");
+  const collaborationTaskColumns = database.prepare("PRAGMA table_info(collaboration_tasks)").all();
+  if (!collaborationTaskColumns.some((column) => column.name === "round_index")) database.exec("ALTER TABLE collaboration_tasks ADD COLUMN round_index INTEGER NOT NULL DEFAULT 1");
+  if (!collaborationTaskColumns.some((column) => column.name === "attempt_count")) database.exec("ALTER TABLE collaboration_tasks ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0");
+  if (!collaborationTaskColumns.some((column) => column.name === "retry_log")) database.exec("ALTER TABLE collaboration_tasks ADD COLUMN retry_log TEXT NOT NULL DEFAULT '[]'");
 
   const now = () => new Date().toISOString();
   const id = () => randomUUID();
@@ -222,20 +238,31 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
       .run(id(), eventType, resourceType, resourceId, JSON.stringify(details), now());
   };
 
-  function createProject({ name, workspacePath, instructions = "" }) {
-    const project = { id: id(), name, workspacePath, instructions, createdAt: now() };
-    database.prepare("INSERT INTO projects (id, name, workspace_path, instructions, created_at) VALUES (?, ?, ?, ?, ?)")
-      .run(project.id, project.name, project.workspacePath, project.instructions, project.createdAt);
+  function createProject({ name, workspacePath, instructions = "", collaborationRoundLimit = 2, emptyResponseRetryCount = 1 }) {
+    const project = { id: id(), name, workspacePath, instructions, collaborationRoundLimit, emptyResponseRetryCount, createdAt: now() };
+    database.prepare("INSERT INTO projects (id, name, workspace_path, instructions, collaboration_round_limit, empty_response_retry_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(project.id, project.name, project.workspacePath, project.instructions, project.collaborationRoundLimit, project.emptyResponseRetryCount, project.createdAt);
     audit("project.created", "project", project.id, { name, workspacePath });
     return project;
   }
 
   function listProjects() {
-    return database.prepare("SELECT id, name, workspace_path AS workspacePath, instructions, created_at AS createdAt FROM projects ORDER BY created_at ASC").all();
+    return database.prepare("SELECT id, name, workspace_path AS workspacePath, instructions, collaboration_round_limit AS collaborationRoundLimit, empty_response_retry_count AS emptyResponseRetryCount, created_at AS createdAt FROM projects ORDER BY created_at ASC").all();
   }
 
   function getProject(projectId) {
-    return database.prepare("SELECT id, name, workspace_path AS workspacePath, instructions, created_at AS createdAt FROM projects WHERE id = ?").get(projectId);
+    return database.prepare("SELECT id, name, workspace_path AS workspacePath, instructions, collaboration_round_limit AS collaborationRoundLimit, empty_response_retry_count AS emptyResponseRetryCount, created_at AS createdAt FROM projects WHERE id = ?").get(projectId);
+  }
+
+  function updateProjectCollaborationSettings(projectId, { collaborationRoundLimit, emptyResponseRetryCount }) {
+    const project = getProject(projectId);
+    if (!project) return null;
+    const nextRoundLimit = collaborationRoundLimit ?? project.collaborationRoundLimit;
+    const nextRetryCount = emptyResponseRetryCount ?? project.emptyResponseRetryCount;
+    database.prepare("UPDATE projects SET collaboration_round_limit = ?, empty_response_retry_count = ? WHERE id = ?")
+      .run(nextRoundLimit, nextRetryCount, projectId);
+    audit("project.collaboration_settings_updated", "project", projectId, { collaborationRoundLimit: nextRoundLimit, emptyResponseRetryCount: nextRetryCount });
+    return getProject(projectId);
   }
 
   function updateProjectInstructions(projectId, instructions) {
@@ -564,6 +591,8 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
   }
 
   function publicCollaborationTask(task) {
+    let retryLog = [];
+    try { retryLog = JSON.parse(task.retryLog || "[]"); } catch { retryLog = []; }
     return {
       id: task.id,
       runId: task.runId,
@@ -579,42 +608,47 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
       startedAt: task.startedAt,
       completedAt: task.completedAt,
       elapsedMs: task.elapsedMs,
+      roundIndex: task.roundIndex,
+      attemptCount: task.attemptCount,
+      retryLog,
     };
   }
 
   function getCollaborationRun(runId) {
-    const run = database.prepare("SELECT id, project_id AS projectId, lead_session_id AS leadSessionId, request_content AS requestContent, status, started_at AS startedAt, completed_at AS completedAt, elapsed_ms AS elapsedMs, summary FROM collaboration_runs WHERE id = ?").get(runId);
+    const run = database.prepare("SELECT id, project_id AS projectId, lead_session_id AS leadSessionId, request_content AS requestContent, status, started_at AS startedAt, completed_at AS completedAt, elapsed_ms AS elapsedMs, summary, round_limit AS roundLimit, empty_response_retry_count AS emptyResponseRetryCount FROM collaboration_runs WHERE id = ?").get(runId);
     if (!run) return null;
-    const tasks = database.prepare("SELECT id, run_id AS runId, child_session_id AS childSessionId, child_name AS childName, child_role AS childRole, provider, model, instruction_message_id AS instructionMessageId, response_message_id AS responseMessageId, status, error, started_at AS startedAt, completed_at AS completedAt, elapsed_ms AS elapsedMs FROM collaboration_tasks WHERE run_id = ? ORDER BY rowid ASC").all(runId).map(publicCollaborationTask);
+    const tasks = database.prepare("SELECT id, run_id AS runId, child_session_id AS childSessionId, child_name AS childName, child_role AS childRole, provider, model, instruction_message_id AS instructionMessageId, response_message_id AS responseMessageId, status, error, started_at AS startedAt, completed_at AS completedAt, elapsed_ms AS elapsedMs, round_index AS roundIndex, attempt_count AS attemptCount, retry_log AS retryLog FROM collaboration_tasks WHERE run_id = ? ORDER BY round_index ASC, rowid ASC").all(runId).map(publicCollaborationTask);
     return { ...run, tasks };
   }
 
-  function createCollaborationRun({ projectId, leadSessionId, requestContent }) {
-    const run = { id: id(), projectId, leadSessionId, requestContent, status: "running", startedAt: now() };
-    database.prepare("INSERT INTO collaboration_runs (id, project_id, lead_session_id, request_content, status, started_at, completed_at, elapsed_ms, summary) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(run.id, run.projectId, run.leadSessionId, run.requestContent, run.status, run.startedAt, null, null, "");
-    audit("collaboration.run_started", "collaboration_run", run.id, { projectId, leadSessionId });
+  function createCollaborationRun({ projectId, leadSessionId, requestContent, roundLimit = 1, emptyResponseRetryCount = 0 }) {
+    const run = { id: id(), projectId, leadSessionId, requestContent, status: "running", roundLimit, emptyResponseRetryCount, startedAt: now() };
+    database.prepare("INSERT INTO collaboration_runs (id, project_id, lead_session_id, request_content, status, started_at, completed_at, elapsed_ms, summary, round_limit, empty_response_retry_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(run.id, run.projectId, run.leadSessionId, run.requestContent, run.status, run.startedAt, null, null, "", run.roundLimit, run.emptyResponseRetryCount);
+    audit("collaboration.run_started", "collaboration_run", run.id, { projectId, leadSessionId, roundLimit, emptyResponseRetryCount });
     return getCollaborationRun(run.id);
   }
 
-  function createCollaborationTask({ runId, childSessionId, childName, childRole = "", provider = null, model = null, instructionMessageId = null }) {
-    const task = { id: id(), runId, childSessionId, childName, childRole, provider, model, instructionMessageId, status: "queued" };
-    database.prepare("INSERT INTO collaboration_tasks (id, run_id, child_session_id, child_name, child_role, provider, model, instruction_message_id, response_message_id, status, error, started_at, completed_at, elapsed_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(task.id, task.runId, task.childSessionId, task.childName, task.childRole, task.provider, task.model, task.instructionMessageId, null, task.status, "", null, null, null);
-    audit("collaboration.task_queued", "collaboration_task", task.id, { runId, childSessionId, childName });
+  function createCollaborationTask({ runId, childSessionId, childName, childRole = "", provider = null, model = null, instructionMessageId = null, roundIndex = 1 }) {
+    const task = { id: id(), runId, childSessionId, childName, childRole, provider, model, instructionMessageId, roundIndex, attemptCount: 0, retryLog: [], status: "queued" };
+    database.prepare("INSERT INTO collaboration_tasks (id, run_id, child_session_id, child_name, child_role, provider, model, instruction_message_id, response_message_id, status, error, started_at, completed_at, elapsed_ms, round_index, attempt_count, retry_log) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(task.id, task.runId, task.childSessionId, task.childName, task.childRole, task.provider, task.model, task.instructionMessageId, null, task.status, "", null, null, null, task.roundIndex, task.attemptCount, JSON.stringify(task.retryLog));
+    audit("collaboration.task_queued", "collaboration_task", task.id, { runId, childSessionId, childName, roundIndex });
     return getCollaborationRun(runId).tasks.find((item) => item.id === task.id);
   }
 
-  function updateCollaborationTask(taskId, { status, error, responseMessageId } = {}) {
-    const existing = database.prepare("SELECT id, run_id AS runId, status, started_at AS startedAt FROM collaboration_tasks WHERE id = ?").get(taskId);
+  function updateCollaborationTask(taskId, { status, error, responseMessageId, attemptCount, retryLog } = {}) {
+    const existing = database.prepare("SELECT id, run_id AS runId, status, started_at AS startedAt, attempt_count AS attemptCount, retry_log AS retryLog FROM collaboration_tasks WHERE id = ?").get(taskId);
     if (!existing) return null;
     const nextStatus = status ?? existing.status;
     const starts = nextStatus === "running" && !existing.startedAt ? now() : existing.startedAt;
     const finishes = ["completed", "failed", "cancelled", "timed_out"].includes(nextStatus) ? now() : null;
     const elapsed = finishes && starts ? Math.max(0, Date.parse(finishes) - Date.parse(starts)) : null;
-    database.prepare("UPDATE collaboration_tasks SET status = ?, error = ?, response_message_id = ?, started_at = ?, completed_at = ?, elapsed_ms = ? WHERE id = ?")
-      .run(nextStatus, error ?? "", responseMessageId ?? null, starts, finishes, elapsed, taskId);
-    audit(`collaboration.task_${nextStatus}`, "collaboration_task", taskId, { runId: existing.runId, error: Boolean(error) });
+    const nextAttempts = attemptCount ?? existing.attemptCount;
+    const nextRetryLog = retryLog === undefined ? existing.retryLog : JSON.stringify(retryLog);
+    database.prepare("UPDATE collaboration_tasks SET status = ?, error = ?, response_message_id = ?, started_at = ?, completed_at = ?, elapsed_ms = ?, attempt_count = ?, retry_log = ? WHERE id = ?")
+      .run(nextStatus, error ?? "", responseMessageId ?? null, starts, finishes, elapsed, nextAttempts, nextRetryLog, taskId);
+    audit(`collaboration.task_${nextStatus}`, "collaboration_task", taskId, { runId: existing.runId, error: Boolean(error), attemptCount: nextAttempts });
     return getCollaborationRun(existing.runId).tasks.find((item) => item.id === taskId);
   }
 
@@ -698,5 +732,5 @@ export function openStore(dataDirectory, { legacyDataDirectory, legacyDataDirect
     audit("setting.updated", "setting", key, { key });
   }
 
-  return { close: () => database.close(), createProject, listProjects, getProject, updateProjectInstructions, listProjectAgents, getProjectAgent, createProjectAgent, updateProjectAgent, deleteProjectAgent, deleteProject, createSession, listSessions, countProjectChildSessions, getProjectLeadSession, ensureProjectLeadSession, getSession, renameSession, archiveSession, updateSessionModel, updateSessionRole, updateSessionRateLimit, searchSessions, addMessage, listMessages, createPendingAttachment, getAttachment, attachPendingAttachments, deletePendingAttachment, deleteMessage, deleteSession, getOrCreateDiscordSession, getSessionContext, saveSessionContext, listMemories, createMemory, updateMemory, deleteMemory, listGoals, createGoal, updateGoal, deleteGoal, createCollaborationRun, createCollaborationTask, updateCollaborationTask, completeCollaborationRun, getCollaborationRun, listCollaborationRuns, recordFileProvenance, listFileProvenance, createApproval, listApprovals, getApproval, decideApproval, expireApproval, listAuditEvents, getSetting, setSetting };
+  return { close: () => database.close(), createProject, listProjects, getProject, updateProjectCollaborationSettings, updateProjectInstructions, listProjectAgents, getProjectAgent, createProjectAgent, updateProjectAgent, deleteProjectAgent, deleteProject, createSession, listSessions, countProjectChildSessions, getProjectLeadSession, ensureProjectLeadSession, getSession, renameSession, archiveSession, updateSessionModel, updateSessionRole, updateSessionRateLimit, searchSessions, addMessage, listMessages, createPendingAttachment, getAttachment, attachPendingAttachments, deletePendingAttachment, deleteMessage, deleteSession, getOrCreateDiscordSession, getSessionContext, saveSessionContext, listMemories, createMemory, updateMemory, deleteMemory, listGoals, createGoal, updateGoal, deleteGoal, createCollaborationRun, createCollaborationTask, updateCollaborationTask, completeCollaborationRun, getCollaborationRun, listCollaborationRuns, recordFileProvenance, listFileProvenance, createApproval, listApprovals, getApproval, decideApproval, expireApproval, listAuditEvents, getSetting, setSetting };
 }

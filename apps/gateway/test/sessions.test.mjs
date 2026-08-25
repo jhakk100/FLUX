@@ -190,3 +190,47 @@ test("per-conversation rate limits and applied file provenance persist", async (
   assert.equal(store.listFileProvenance(project.id)[0].debugMarker, true);
   store.close();
 });
+test("project collaboration settings and retry diagnostics persist per project", async (context) => {
+  const dataDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "flux-project-collaboration-settings-"));
+  context.after(() => fs.rm(dataDirectory, { recursive: true, force: true }));
+  const store = openStore(dataDirectory);
+  const project = store.createProject({
+    name: "rounds",
+    workspacePath: "C:/work/rounds",
+    collaborationRoundLimit: 3,
+    emptyResponseRetryCount: 2,
+  });
+  assert.equal(store.getProject(project.id).collaborationRoundLimit, 3);
+  assert.equal(store.getProject(project.id).emptyResponseRetryCount, 2);
+  const updatedProject = store.updateProjectCollaborationSettings(project.id, { collaborationRoundLimit: 2, emptyResponseRetryCount: 1 });
+  assert.equal(updatedProject.collaborationRoundLimit, 2);
+  assert.equal(updatedProject.emptyResponseRetryCount, 1);
+
+  const lead = store.ensureProjectLeadSession(updatedProject);
+  const run = store.createCollaborationRun({
+    projectId: project.id,
+    leadSessionId: lead.id,
+    requestContent: "진단",
+    roundLimit: 2,
+    emptyResponseRetryCount: 1,
+  });
+  const task = store.createCollaborationTask({
+    runId: run.id,
+    childSessionId: "member-1",
+    childName: "로컬 검토자",
+    provider: "ollama",
+    model: "gemma",
+    roundIndex: 2,
+  });
+  const retryLog = [{ attempt: 1, error: "Model returned an empty response.", at: new Date().toISOString() }];
+  store.updateCollaborationTask(task.id, { status: "running", attemptCount: 2, retryLog });
+  const completed = store.updateCollaborationTask(task.id, { status: "completed", attemptCount: 2, retryLog });
+  const stored = store.getCollaborationRun(run.id);
+
+  assert.equal(stored.roundLimit, 2);
+  assert.equal(stored.emptyResponseRetryCount, 1);
+  assert.equal(completed.roundIndex, 2);
+  assert.equal(completed.attemptCount, 2);
+  assert.equal(completed.retryLog[0].error, "Model returned an empty response.");
+  store.close();
+});

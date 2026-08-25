@@ -62,7 +62,34 @@
     <dialog id="files-dialog" class="wide"><form method="dialog"><h2>프로젝트 파일</h2><p class="muted">읽기와 변경은 프로젝트 작업공간 내부의 일반 텍스트 파일만 허용됩니다. 실제 처리 방식은 설정의 파일 작업 승인 정책을 따릅니다.</p><label>프로젝트<select id="file-project"></select></label><p id="file-location" class="muted"></p><div class="file-browser"><div><div class="row"><button id="file-up" type="button" class="secondary">상위</button><button id="file-root" type="button" class="secondary">루트</button></div><input id="file-search" placeholder="파일·폴더 이름 검색 (2글자 이상)" style="margin:8px 0" /><div id="file-list" class="file-list"></div></div><div><label>변경 종류<select id="file-action"><option value="modify-file">기존 파일 수정</option><option value="create-file">새 파일 생성</option><option value="delete-file">파일 삭제</option></select></label><label>파일 경로<input id="file-path" spellcheck="false" placeholder="src/example.txt" /></label><label>내용<textarea id="file-content" spellcheck="false" placeholder="파일을 선택하거나 내용을 입력하세요."></textarea></label><p id="file-result" class="muted"></p><details><summary>최근 변경 출처</summary><div id="file-provenance" class="muted"></div></details><div class="row" style="justify-content:end"><button id="request-file-change" type="button">변경 실행</button></div></div></div><div class="row" style="justify-content:end;margin-top:12px"><button value="cancel" class="secondary">닫기</button></div></form></dialog>
     <dialog id="session-actions-dialog"><form method="dialog"><h2>대화 관리</h2><label>대화 이름<input id="session-actions-title" maxlength="240" required /></label><p id="session-actions-result" class="muted"></p><div class="row" style="justify-content:end"><button value="cancel" class="secondary">취소</button><button id="rename-session" type="button" class="secondary">이름 변경</button><button id="delete-session" type="button" class="danger">대화 삭제</button></div></form></dialog>
     <dialog id="project-manage-dialog"><form method="dialog"><h2>프로젝트 관리</h2><p class="muted">프로젝트를 삭제해도 실제 작업 폴더와 그 안의 파일은 절대 삭제되지 않습니다. 해당 프로젝트에 연결된 대화는 보존됩니다.</p><div id="project-manager-list" class="project-manager-list"></div><div class="row" style="justify-content:end;margin-top:12px"><button value="cancel" class="secondary">닫기</button></div></form></dialog>
-    <dialog id="project-team-dialog" class="scroll-dialog"><form method="dialog"><h2>프로젝트 멤버</h2><p class="muted">프로젝트는 사용자와 superior(최상위 조정자), 그리고 최대 4명의 LLM 멤버가 같은 단체방에서 대화합니다. 활성 멤버는 아래 순서대로 한 명씩만 호출되고, 각 멤버는 제한 시간 안에 짧게 보고합니다. 모두 끝나면 superior가 최종 답변을 작성합니다. 멤버는 파일을 변경할 수 없습니다.</p><label>프로젝트<select id="project-team-project"></select></label><div id="project-agent-list" class="project-agent-list"></div><label>이름<input id="project-agent-name" maxlength="120" placeholder="예: 코드 검토자" /></label><label>역할 (선택)<textarea id="project-agent-role" maxlength="1000" placeholder="예: 보안·오류 가능성을 짧게 검토"></textarea></label><label>공급자<select id="project-agent-provider"><option value="ollama">Ollama</option><option value="lm-studio">LM Studio</option><option value="google-ai">Google AI · Gemini</option><option value="openai-compatible">OpenAI 호환 Responses API</option><option value="openai-chat-compatible">일반 Chat Completions 호환 API</option><option value="factchat">조선대 FactChat Gateway</option><option value="factchat-responses">조선대 FactChat Responses / Codex</option></select></label><label>모델 ID<div class="model-choice"><input id="project-agent-model" maxlength="240" placeholder="직접 입력 가능 · 예: gpt-5-nano" /><button id="project-agent-model-picker" type="button" class="secondary">모델 조회</button></div></label><div class="row"><label style="flex:1">발언 순서 (1부터)<input id="project-agent-turn" type="number" inputmode="numeric" min="1" max="4" value="1" /></label><label style="flex:1">응답 제한 (초)<input id="project-agent-timeout" type="number" inputmode="numeric" min="1" max="300" value="300" /></label><label style="flex:1">다음 멤버 전 대기 (초)<input id="project-agent-wait" type="number" inputmode="numeric" min="0" max="300" value="0" /></label></div><label class="row"><input id="project-agent-enabled" type="checkbox" style="width:auto" checked />이 프로젝트 단체방에 포함</label><p id="project-agent-result" class="muted"></p><div class="row" style="justify-content:end"><button id="new-project-agent" type="button" class="secondary">새 멤버</button><button id="delete-project-agent" type="button" class="danger">삭제</button><button id="save-project-agent" type="button">저장</button><button value="cancel" class="secondary">닫기</button></div></form></dialog>
+        <dialog id="project-team-dialog" class="scroll-dialog">
+      <form method="dialog">
+        <h2>프로젝트 단체방 설정</h2>
+        <p class="muted">한 프로젝트는 사용자, superior(최상위 조정자), 최대 4명의 LLM 멤버가 하나의 단체방에서 순서대로 대화합니다. 매 라운드마다 superior가 짧은 계획을 만들고, 멤버 보고를 취합해 최종 답변을 작성합니다. 멤버는 파일을 변경하지 않습니다.</p>
+        <label>프로젝트<select id="project-team-project"></select></label>
+        <div class="card">
+          <h3>superior · 최상위 조정자</h3>
+          <p class="muted">사용자 바로 아래 권한의 프로젝트 대표입니다. 프로젝트의 최종 답변과 라운드 계획을 담당합니다.</p>
+          <label>공급자<select id="project-superior-provider"><option value="">기본 API 설정 사용</option><option value="ollama">Ollama</option><option value="lm-studio">LM Studio</option><option value="google-ai">Google AI · Gemini</option><option value="openai-compatible">OpenAI 호환 Responses API</option><option value="openai-chat-compatible">일반 Chat Completions 호환 API</option><option value="factchat">조선대 FactChat Gateway</option><option value="factchat-responses">조선대 FactChat Responses / Codex</option></select></label>
+          <label>모델 ID<div class="model-choice"><input id="project-superior-model" maxlength="240" placeholder="비워두면 선택한 공급자의 기본 모델 · 직접 입력 가능" /><button id="project-superior-model-picker" type="button" class="secondary">모델 조회</button></div></label>
+          <div class="row"><label style="flex:1">협업 라운드 (1~3)<select id="project-round-limit"><option value="1">1회</option><option value="2">2회</option><option value="3">3회</option></select></label><label style="flex:1">빈 응답 자동 재시도 (0~2)<select id="project-empty-retry-count"><option value="0">재시도 안 함</option><option value="1">1회</option><option value="2">2회</option></select></label></div>
+          <p class="muted">라운드 수는 같은 멤버 순서를 다시 돌며 보완할 횟수입니다. 재시도는 빈 응답 또는 일시적인 연결 실패에만 적용되고, 시간 초과·사용자 중지는 재시도하지 않습니다.</p>
+          <p id="project-room-result" class="muted"></p>
+          <div class="row" style="justify-content:end"><button id="save-project-room-settings" type="button" class="secondary">superior·라운드 저장</button></div>
+        </div>
+        <h3>멤버 · 최대 4명</h3>
+        <div id="project-agent-list" class="project-agent-list"></div>
+        <label>이름<input id="project-agent-name" maxlength="120" placeholder="예: 코드 검토자" /></label>
+        <label>역할 (선택)<textarea id="project-agent-role" maxlength="1000" placeholder="예: 보안·오류 가능성을 짧게 검토"></textarea></label>
+        <label>공급자<select id="project-agent-provider"><option value="ollama">Ollama</option><option value="lm-studio">LM Studio</option><option value="google-ai">Google AI · Gemini</option><option value="openai-compatible">OpenAI 호환 Responses API</option><option value="openai-chat-compatible">일반 Chat Completions 호환 API</option><option value="factchat">조선대 FactChat Gateway</option><option value="factchat-responses">조선대 FactChat Responses / Codex</option></select></label>
+        <label>모델 ID<div class="model-choice"><input id="project-agent-model" maxlength="240" placeholder="직접 입력 가능 · 예: gpt-5-nano" /><button id="project-agent-model-picker" type="button" class="secondary">모델 조회</button></div></label>
+        <div class="row"><label style="flex:1">발언 순서 (1부터)<input id="project-agent-turn" type="number" inputmode="numeric" min="1" max="4" value="1" /></label><label style="flex:1">응답 완료 제한 (초)<input id="project-agent-timeout" type="number" inputmode="numeric" min="1" max="300" value="300" /></label><label style="flex:1">다음 멤버 시작 전 간격 (초)<input id="project-agent-wait" type="number" inputmode="numeric" min="0" max="300" value="0" /></label></div>
+        <p class="muted">응답 완료 제한은 이 멤버가 한 차례의 보고를 끝낼 수 있는 최대 시간입니다. 다음 멤버 시작 전 간격은 이 멤버의 보고가 끝난 뒤 다음 순번을 호출하기 전까지 기다리는 시간입니다.</p>
+        <label class="row"><input id="project-agent-enabled" type="checkbox" style="width:auto" checked />이 프로젝트 단체방에 포함</label>
+        <p id="project-agent-result" class="muted"></p>
+        <div class="row" style="justify-content:end"><button id="new-project-agent" type="button" class="secondary">새 멤버</button><button id="delete-project-agent" type="button" class="danger">삭제</button><button id="save-project-agent" type="button">멤버 저장</button><button value="cancel" class="secondary">닫기</button></div>
+      </form>
+    </dialog>
     <dialog id="memory-dialog" class="wide"><form method="dialog"><h2>장기 기억</h2><p class="muted">여기에 직접 저장한 기억은 이후 대화에 관련될 때만 문맥으로 전달됩니다. 민감한 비밀번호·API 키는 저장하지 마세요.</p><div class="file-browser"><div><input id="memory-search" placeholder="기억 검색" /><div id="memory-list" class="file-list" style="margin-top:8px"></div></div><div><label>종류<select id="memory-kind"><option value="fact">사실</option><option value="preference">선호</option><option value="profile">프로필</option><option value="goal">목표</option></select></label><label>내용<textarea id="memory-content" maxlength="5000" placeholder="예: 답변은 한국어로, 간결하게 작성하는 것을 선호함"></textarea></label><p id="memory-result" class="muted"></p><div class="row" style="justify-content:end"><button id="new-memory" type="button" class="secondary">새 기억</button><button id="delete-memory" type="button" class="danger">삭제</button><button id="save-memory" type="button">저장</button></div></div></div><div class="row" style="justify-content:end;margin-top:12px"><button value="cancel" class="secondary">닫기</button></div></form></dialog>
     <dialog id="goals-dialog"><form method="dialog"><h2>지속 목표</h2><p class="muted">활성 목표만 웹·Discord 대화의 참고 문맥에 들어갑니다.</p><label>저장된 목표<select id="goal-list" size="5"></select></label><label>목표 이름<input id="goal-title" maxlength="240" placeholder="예: 정보처리기사 공부" /></label><label>상태<select id="goal-status"><option value="active">활성</option><option value="paused">일시정지</option><option value="completed">완료</option></select></label><label>진행 메모<textarea id="goal-details" maxlength="5000" placeholder="예: 이번 주에는 3장까지 문제 풀이"></textarea></label><p id="goal-result" class="muted"></p><div class="row" style="justify-content:end"><button id="new-goal" type="button" class="secondary">새 목표</button><button id="delete-goal" type="button" class="danger">삭제</button><button id="save-goal" type="button">저장</button><button value="cancel" class="secondary">닫기</button></div></form></dialog>
     <dialog id="provider-dialog" class="scroll-dialog"><form method="dialog"><h2>AI API 설정</h2><p class="muted">API 키를 저장한 뒤, 사용 가능한 모델을 목록에서 선택하세요. 키는 이 PC에만 저장됩니다.</p><div class="row"><label style="flex:1">현재 대화에 사용할 공급자<select id="provider-type"><option value="demo">Demo</option><option value="ollama">Ollama</option><option value="lm-studio">LM Studio</option><option value="google-ai">Google AI · Gemini</option><option value="openai-compatible">OpenAI 호환 Responses API</option><option value="openai-chat-compatible">일반 Chat Completions 호환 API</option><option value="factchat">조선대 FactChat Gateway</option><option value="factchat-responses">조선대 FactChat Responses / Codex</option></select></label><button id="refresh-models" type="button" class="secondary" title="현재 공급자의 모델 목록을 다시 조회합니다">↻ 모델 새로고침</button></div><div class="api-section"><h3>Ollama</h3><p class="muted">기본 로컬 서버를 사용합니다. 설치된 모델을 선택하세요.</p><div class="model-choice"><input id="ollama-model" readonly placeholder="선택된 모델 없음" /><button type="button" class="secondary" data-select-model="ollama">모델 선택</button></div><details><summary>고급 설정</summary><label>서버 주소<input id="ollama-base-url" spellcheck="false" /></label><label>요청 문맥 길이 (토큰, 선택)<input id="ollama-context-length" inputmode="numeric" min="1024" placeholder="비워두면 Ollama 기본값" /></label></details></div><div class="api-section"><h3>LM Studio</h3><label>API 키 (선택)<span class="secret-input"><input id="lmstudio-api-key" type="password" autocomplete="off" placeholder="새 키를 붙여넣거나 빈칸으로 유지" /><button type="button" class="secondary" data-toggle-secret="lmstudio-api-key">표시</button></span></label><div class="model-choice"><input id="lmstudio-model" readonly placeholder="선택된 모델 없음" /><button type="button" class="secondary" data-select-model="lm-studio">모델 선택</button></div><details><summary>고급 설정</summary><label>서버 주소<input id="lmstudio-base-url" spellcheck="false" /></label></details><label class="row"><input id="clear-lmstudio-api-key" type="checkbox" style="width:auto" />저장된 API 키를 지우기</label></div><div class="api-section"><h3>Google AI · Gemini</h3><label>API 키<span class="secret-input"><input id="google-ai-api-key" type="password" autocomplete="off" placeholder="새 키를 붙여넣거나 빈칸으로 유지" /><button type="button" class="secondary" data-toggle-secret="google-ai-api-key">표시</button></span></label><div class="model-choice"><input id="google-ai-model" readonly placeholder="선택된 모델 없음" /><button type="button" class="secondary" data-select-model="google-ai">모델 선택</button></div><details><summary>고급 설정</summary><label>서버 주소<input id="google-ai-base-url" spellcheck="false" /></label></details><label class="row"><input id="clear-google-ai-api-key" type="checkbox" style="width:auto" />저장된 API 키를 지우기</label></div><div class="api-section"><h3>OpenAI / 일반 OpenAI 호환</h3><label>API 키<span class="secret-input"><input id="openai-api-key" type="password" autocomplete="off" placeholder="새 키를 붙여넣거나 빈칸으로 유지" /><button type="button" class="secondary" data-toggle-secret="openai-api-key">표시</button></span></label><div class="model-choice"><input id="openai-model" readonly placeholder="선택된 모델 없음" /><button type="button" class="secondary" data-select-model="openai">모델 선택</button></div><details><summary>일반 사설 API 고급 설정</summary><label>서버 주소<input id="openai-base-url" spellcheck="false" /></label><p>일반 사설 API는 제공처 문서의 주소를 입력하세요.</p></details><label class="row"><input id="clear-openai-api-key" type="checkbox" style="width:auto" />저장된 API 키를 지우기</label></div><div class="api-section"><h3>조선대 FactChat Gateway</h3><label>API 키<span class="secret-input"><input id="factchat-api-key" type="password" autocomplete="off" placeholder="새 키를 붙여넣거나 빈칸으로 유지" /><button type="button" class="secondary" data-toggle-secret="factchat-api-key">표시</button></span></label><div class="model-choice"><input id="factchat-model" readonly placeholder="선택된 모델 없음" /><button type="button" class="secondary" data-select-model="factchat">모델 선택</button></div><details><summary>고급 설정</summary><label>서버 주소<input id="factchat-base-url" spellcheck="false" /></label></details><label class="row"><input id="clear-factchat-api-key" type="checkbox" style="width:auto" />저장된 API 키를 지우기</label></div><p id="provider-result" class="muted"></p><div class="row" style="justify-content:end"><button value="cancel" class="secondary">닫기</button><button id="test-provider" class="secondary" value="default">현재 공급자 시험</button><button id="save-provider" value="default">모두 저장</button></div></form></dialog>
@@ -72,7 +99,7 @@
     <dialog id="project-instructions-dialog"><form method="dialog"><h2>프로젝트 지침</h2><p class="muted">지침은 선택한 FLUX 프로젝트에만 저장되어, 해당 프로젝트 대화에만 전달됩니다.</p><label>프로젝트<select id="project-instructions-project"></select></label><label>지침 (Markdown)<textarea id="project-instructions-text" rows="12" maxlength="16000" placeholder="예: 이 프로젝트에서는 TypeScript를 사용하고, 변경 전에는 계획을 간단히 설명해줘."></textarea></label><p id="project-instructions-result" class="muted"></p><div class="row" style="justify-content:end"><button value="cancel" class="secondary">닫기</button><button id="save-project-instructions" value="default">저장</button></div></form></dialog>
     <dialog id="settings-dialog"><form method="dialog"><h2>설정</h2><div id="app-status" class="help"></div><label>테마<select id="theme-mode"><option value="dark">다크 모드</option><option value="light">라이트 모드</option></select></label><div class="row" style="margin:12px 0"><button id="open-provider-settings" type="button" class="secondary">AI API 설정</button><button id="open-agent-instructions" type="button" class="secondary">말투·행동 설정</button><button id="open-project-instructions" type="button" class="secondary">프로젝트 지침</button></div><h3>파일 작업 승인 정책</h3><label>정책<select id="file-approval-mode"><option value="global">전역 승인 — 생성·수정은 바로 실행</option><option value="agent">나 대신 승인 — 새 파일만 바로 실행</option><option value="ask">승인 요청 — 생성·수정마다 확인</option></select></label><label class="row"><input id="file-provenance-debug" type="checkbox" style="width:auto" />디버그: 모델이 만든 텍스트 코드 파일 첫 줄에 출처 주석 추가</label><p class="muted">출처 기록은 항상 FLUX 내부에 남습니다. 이 옵션은 주석을 지원하는 텍스트 코드 파일에만 적용되며, 기존 파일을 사람이 수정한 뒤의 현재 작성자를 보증하지 않습니다.</p><p class="muted">삭제는 어떤 정책에서도 대상 경로를 직접 확인한 뒤에만 실행합니다. 프로젝트 밖·운영체제 핵심 경로는 항상 차단됩니다.</p><div class="row" style="justify-content:end;margin-top:12px"><button value="cancel" class="secondary">닫기</button></div></form></dialog>
     <script>
-      const state = { sessions: [], sessionResults: null, showArchived: false, projects: [], projectAgents: [], activeProjectAgentId: null, memories: [], activeMemoryId: null, activeSession: null, generatingSessions: new Map(), providerSettings: null, overview: null, approvalSignature: "", activeProjectId: null, collaborationSessionId: null, fileDirectory: ".", pendingAttachments: [] };
+      const state = { sessions: [], sessionResults: null, showArchived: false, projects: [], projectAgents: [], projectRoomSettings: null, activeProjectAgentId: null, memories: [], activeMemoryId: null, activeSession: null, generatingSessions: new Map(), providerSettings: null, overview: null, approvalSignature: "", activeProjectId: null, collaborationSessionId: null, fileDirectory: ".", pendingAttachments: [] };
       let gatewayToken = sessionStorage.getItem("flux-gateway-token") || "";
       const $ = (selector) => document.querySelector(selector);
       const escapeHtml = (text) => text.replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[char]);
@@ -91,9 +118,19 @@
       function collaborationMarkup(generation) {
         const run = generation?.collaboration?.run;
         if (!run) return "";
-        const elapsed = run.completedAt ? `${(Number(run.elapsedMs || 0) / 1000).toFixed(1)}초` : elapsedLabel(generation.startedAt);
+        const elapsed = run.completedAt ? (Number(run.elapsedMs || 0) / 1000).toFixed(1) + "초" : elapsedLabel(generation.startedAt);
         const tasks = [...generation.collaboration.tasks.values()];
-        return `<article class="collaboration-status" data-collaboration-session="${generation.sessionId}"><strong>협업 ${run.status === "running" ? "진행 중" : run.status}</strong> · ${elapsed}${tasks.length ? `<ul>${tasks.map((task) => `<li><strong>${escapeHtml(task.childName)}</strong> — ${escapeHtml(task.status)}${task.model ? ` · ${escapeHtml(task.provider || "")}/${escapeHtml(task.model)}` : ""}${task.elapsedMs != null ? ` · ${(Number(task.elapsedMs) / 1000).toFixed(1)}초` : ""}${task.error ? ` · ${escapeHtml(task.error)}` : ""}</li>`).join("")}</ul>` : ""}</article>`;
+        const rounds = Number(run.roundLimit ?? 1);
+        const taskMarkup = tasks.map((task) => {
+          const round = Number.isInteger(task.roundIndex) ? " · 라운드 " + task.roundIndex : "";
+          const attempts = Number(task.attemptCount ?? 0) > 1 ? " · " + task.attemptCount + "회 시도" : "";
+          const retry = task.retryLog?.length ? " · 재시도 기록 " + task.retryLog.length + "건" : "";
+          const model = task.model ? " · " + escapeHtml(task.provider || "") + "/" + escapeHtml(task.model) : "";
+          const duration = task.elapsedMs != null ? " · " + (Number(task.elapsedMs) / 1000).toFixed(1) + "초" : "";
+          const error = task.error ? " · " + escapeHtml(task.error) : "";
+          return "<li><strong>" + escapeHtml(task.childName) + "</strong> — " + escapeHtml(task.status) + round + attempts + retry + model + duration + error + "</li>";
+        }).join("");
+        return '<article class="collaboration-status" data-collaboration-session="' + generation.sessionId + '"><strong>협업 ' + (run.status === "running" ? "진행 중" : escapeHtml(run.status)) + '</strong> · ' + elapsed + ' · 최대 ' + rounds + '라운드' + (tasks.length ? "<ul>" + taskMarkup + "</ul>" : "") + "</article>";
       }
       function ensureLiveGeneration(sessionId) {
         if (state.activeSession?.id !== sessionId) return;
@@ -155,9 +192,10 @@
       function renderCollaborationControl() {
         const active = state.activeSession;
         const available = Boolean(active?.projectLead) && state.projectAgents.some((agent) => agent.enabled);
-
+        const project = state.projects.find((item) => item.id === active?.projectId);
+        const rounds = Number(project?.collaborationRoundLimit ?? 2);
         $("#project-members").disabled = !active?.projectLead || isSessionGenerating(active?.id) || Boolean(active?.archivedAt);
-        $("#project-room-status").textContent = active?.projectLead ? (available ? `순차 협업 · ${state.projectAgents.filter((agent) => agent.enabled).length}명` : "멤버 없음 · 단독 응답") : "";
+        $("#project-room-status").textContent = active?.projectLead ? (available ? "순차 협업 · " + state.projectAgents.filter((agent) => agent.enabled).length + "명 · 최대 " + rounds + "라운드" : "멤버 없음 · 단독 응답") : "";
       }
       async function loadSessionTeam() {
         if (!state.activeSession?.projectLead || !state.activeSession?.projectId) {
@@ -184,7 +222,7 @@
         renderProjectAgentList();
       }
       function renderProjectAgentList() {
-        $("#project-agent-list").innerHTML = state.projectAgents.map((agent) => `<button type="button" class="secondary" data-project-agent="${agent.id}"><strong>${Number(agent.turnOrder ?? 0) + 1}번째 · ${escapeHtml(agent.name)}</strong> · ${escapeHtml(agent.providerOverride)}${agent.modelOverride ? ` / ${escapeHtml(agent.modelOverride)}` : ""}<br /><small>${agent.enabled ? "단체방 포함" : "일시 중지"} · 제한 ${escapeHtml(String(agent.timeoutSeconds ?? 300))}초${Number(agent.waitSeconds ?? 0) ? ` · 다음 전 대기 ${escapeHtml(String(agent.waitSeconds))}초` : ""}${agent.role ? ` · ${escapeHtml(agent.role)}` : ""}</small></button>`).join("") || '<p class="muted">등록된 멤버가 없습니다. 멤버가 없으면 superior가 단독으로 답변합니다.</p>';
+        $("#project-agent-list").innerHTML = state.projectAgents.map((agent) => `<button type="button" class="secondary" data-project-agent="${agent.id}"><strong>${Number(agent.turnOrder ?? 0) + 1}번째 · ${escapeHtml(agent.name)}</strong> · ${escapeHtml(agent.providerOverride)}${agent.modelOverride ? ` / ${escapeHtml(agent.modelOverride)}` : ""}<br /><small>${agent.enabled ? "단체방 포함" : "일시 중지"} · 응답 완료 제한 ${escapeHtml(String(agent.timeoutSeconds ?? 300))}초${Number(agent.waitSeconds ?? 0) ? ` · 다음 시작 간격 ${escapeHtml(String(agent.waitSeconds))}초` : ""}${agent.role ? ` · ${escapeHtml(agent.role)}` : ""}</small></button>`).join("") || '<p class="muted">등록된 멤버가 없습니다. 멤버가 없으면 superior가 단독으로 답변합니다.</p>';
         document.querySelectorAll("[data-project-agent]").forEach((button) => button.onclick = () => {
           const agent = state.projectAgents.find((item) => item.id === button.dataset.projectAgent);
           if (!agent) return;
@@ -204,12 +242,64 @@
         state.projectAgents = await (await api(`/api/projects/${projectId}/agents`)).json();
         renderProjectAgentList();
       }
+      function updateProjectInState(project) {
+        state.projects = state.projects.map((item) => item.id === project.id ? project : item);
+      }
+      async function loadProjectRoomSettings(projectId) {
+        const roomProject = await (await api("/api/projects/" + projectId + "/collaboration-settings")).json();
+        const superior = await (await api("/api/projects/" + projectId + "/lead-session", { method: "POST", body: "{}" })).json();
+        const superiorModel = await (await api("/api/sessions/" + superior.id + "/model")).json();
+        state.projectRoomSettings = { project: roomProject, superior: { ...superior, ...superiorModel } };
+        updateProjectInState(roomProject);
+        $("#project-superior-provider").value = superiorModel.providerOverride || "";
+        $("#project-superior-model").value = superiorModel.modelOverride || "";
+        $("#project-round-limit").value = String(roomProject.collaborationRoundLimit ?? 2);
+        $("#project-empty-retry-count").value = String(roomProject.emptyResponseRetryCount ?? 1);
+        $("#project-room-result").textContent = superiorModel.effective?.model ? "현재 적용: " + superiorModel.effective.provider + " / " + superiorModel.effective.model : "현재 적용 모델은 API 설정의 기본값을 따릅니다.";
+      }
+      async function saveProjectRoomSettings() {
+        const projectId = $("#project-team-project").value;
+        const roomProject = await (await api("/api/projects/" + projectId + "/collaboration-settings", { method: "PUT", body: JSON.stringify({ collaborationRoundLimit: Number($("#project-round-limit").value), emptyResponseRetryCount: Number($("#project-empty-retry-count").value) }) })).json();
+        const superiorId = state.projectRoomSettings?.superior?.id;
+        if (!superiorId) throw new Error("superior 세션 정보를 다시 불러오세요.");
+        const providerOverride = $("#project-superior-provider").value || null;
+        const modelOverride = $("#project-superior-model").value.trim() || null;
+        const superiorModel = await (await api("/api/sessions/" + superiorId + "/model", { method: "PUT", body: JSON.stringify({ providerOverride, modelOverride }) })).json();
+        state.projectRoomSettings = { project: roomProject, superior: { ...state.projectRoomSettings.superior, ...superiorModel } };
+        updateProjectInState(roomProject);
+        state.sessions = state.sessions.map((session) => session.id === superiorId ? { ...session, providerOverride: superiorModel.providerOverride, modelOverride: superiorModel.modelOverride } : session);
+        if (state.activeSession?.id === superiorId) state.activeSession = { ...state.activeSession, providerOverride: superiorModel.providerOverride, modelOverride: superiorModel.modelOverride };
+        $("#project-room-result").textContent = "저장됐습니다. 최대 " + roomProject.collaborationRoundLimit + "라운드, 빈 응답 재시도 " + roomProject.emptyResponseRetryCount + "회가 다음 요청부터 적용됩니다.";
+        if (state.activeSession?.id === superiorId) {
+          const effective = superiorModel.effective;
+          $("#session-model-label").textContent = effective.provider + (effective.model ? " · " + effective.model : "") + (superiorModel.providerOverride || superiorModel.modelOverride ? " (이 대화)" : "");
+        }
+        renderCollaborationControl();
+        renderSessions();
+      }
+      async function openProjectSuperiorModelPicker() {
+        const provider = $("#project-superior-provider").value || state.projectRoomSettings?.superior?.effective?.provider;
+        if (!provider || provider === "demo") throw new Error("모델 조회 전에 superior의 실제 API 공급자를 선택하세요.");
+        try {
+          $("#model-picker-info").textContent = provider + "의 사용 가능한 모델을 불러오는 중입니다.";
+          $("#model-picker-list").innerHTML = "";
+          $("#model-picker-dialog").showModal();
+          const result = await (await api("/api/provider-models?provider=" + encodeURIComponent(provider))).json();
+          const models = result.models ?? [];
+          $("#model-picker-info").textContent = result.message ?? (models.length ? models.length + "개 모델 · 선택 후에도 모델 ID를 직접 수정할 수 있습니다." : "사용 가능한 모델이 없습니다.");
+          $("#model-picker-list").innerHTML = models.map((model) => "<button type=\"button\" data-project-superior-model=\"" + escapeHtml(model.id) + "\" title=\"" + escapeHtml(modelTooltip(model, result.usage)) + "\"><strong>" + escapeHtml(model.name) + "</strong><br /><small>" + (model.imageInput === true ? "🖼 이미지 입력 지원" : model.imageInput === false ? "⚠ 이미지 입력 미지원" : "○ 이미지 입력 정보 없음") + "</small></button>").join("") || '<p class="muted" style="padding:12px">사용 가능한 모델이 없습니다.</p>';
+          document.querySelectorAll("[data-project-superior-model]").forEach((button) => button.onclick = () => { $("#project-superior-model").value = button.dataset.projectSuperiorModel; $("#model-picker-dialog").close(); });
+        } catch (error) {
+          if ($("#model-picker-dialog").open) $("#model-picker-dialog").close();
+          $("#project-room-result").textContent = "모델 목록을 불러오지 못했습니다: " + error.message;
+        }
+      }
       async function openProjectTeam(projectId) {
         if (!state.projects.length) throw new Error("먼저 프로젝트를 추가하세요.");
         const select = $("#project-team-project");
         select.innerHTML = state.projects.map((project) => `<option value="${project.id}">${escapeHtml(project.name)}</option>`).join("");
         select.value = projectId || state.activeSession?.projectId || state.projects[0].id;
-        await loadProjectAgents(select.value);
+        await Promise.all([loadProjectAgents(select.value), loadProjectRoomSettings(select.value)]);
         resetProjectAgent();
         $("#project-team-dialog").showModal();
       }
@@ -327,7 +417,9 @@
       $("#project-instructions-project").onchange = () => loadSelectedProjectInstructions();
       $("#save-project-instructions").onclick = async (event) => { event.preventDefault(); try { await saveProjectInstructions(); } catch (error) { $("#project-instructions-result").textContent = `오류: ${error.message}`; } };
       $("#manage-projects").onclick = () => openProjectManager();
-      $("#project-team-project").onchange = async () => { await loadProjectAgents($("#project-team-project").value); resetProjectAgent(); };
+      $("#project-team-project").onchange = async () => { const projectId = $("#project-team-project").value; await Promise.all([loadProjectAgents(projectId), loadProjectRoomSettings(projectId)]); resetProjectAgent(); };
+      $("#save-project-room-settings").onclick = () => saveProjectRoomSettings().catch((error) => { $("#project-room-result").textContent = "저장 실패: " + error.message; });
+      $("#project-superior-model-picker").onclick = () => openProjectSuperiorModelPicker().catch((error) => { $("#project-room-result").textContent = "모델 조회 실패: " + error.message; });
       $("#new-project-agent").onclick = () => resetProjectAgent();
       $("#save-project-agent").onclick = () => saveProjectAgent().catch((error) => { $("#project-agent-result").textContent = `저장 실패: ${error.message}`; });
       $("#project-agent-model-picker").onclick = () => openProjectAgentModelPicker();
