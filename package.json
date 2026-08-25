@@ -2,6 +2,7 @@
   "name": "flux",
   "version": "0.2.18",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "packageManager": "pnpm@11.19.0",
   "description": "Local-first personal AI orchestrator",

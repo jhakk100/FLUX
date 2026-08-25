@@ -105,3 +105,7 @@ Notion 연결은 [Notion 읽기 연결 안내](./docs/user/NOTION_SETUP.md)를 �
 ## 알려진 문제
 
 현재 확인된 제한·외부 서비스 문제·우회 방법은 [알려진 문제](./docs/user/KNOWN_ISSUES.md)에 기록합니다.
+
+## License
+
+MIT © 2026 Baek JongHak. See [LICENSE](./LICENSE).
