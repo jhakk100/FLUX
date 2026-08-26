@@ -1,8 +1,8 @@
-# FLUX
+# FLUX 0.3.0
 
 > Fixing Lousy User eXperience
 
-Windows와 Linux에서 실행되는 로컬 우선 개인 AI 오케스트레이터의 P0 프로토타입입니다.
+Windows와 Linux에서 실행되는 로컬 우선 개인 AI 오케스트레이터입니다.
 개발자의 코딩실력이 형편없기 때문에 아이디어와 약간의 지식만 사용하고 codex와 같은 것들이 코딩을 도와주는 제품이라 하자가 있을 수 있습니다.
 
 
