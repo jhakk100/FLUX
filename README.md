@@ -94,6 +94,8 @@ Discord 봇 연결은 [Discord 연결 안내](./docs/user/DISCORD_SETUP.md)를 �
 
 Notion 연결은 [Notion 읽기 연결 안내](./docs/user/NOTION_SETUP.md)를 참고하세요.
 
+해당 2개의 연결은 확인이 안되어 불안정할 수 있습니다. 문제가 발생할 수 있습니다.
+
 ## 구현 예정
 
 아래는 완료된 P0 기능과 별개로, 다음 업데이트에서 우선 검토·구현할 항목입니다. 전체 범위와 상태는 [선별 기능 목록](./docs/developer/SELECTED_SCOPE.md)에서 확인할 수 있습니다.
